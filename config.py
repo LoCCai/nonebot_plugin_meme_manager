@@ -3,7 +3,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .astrbot_compat import get_astrbot_plugin_data_path
+from .nb2 import bootstrap as _bootstrap
+from .nb2.paths import resolve_data_dir
+
+# 业务层通过 ``from astrbot.api import logger`` 取日志，这里先安装兼容层，
+# 保证 NoneBot2 环境下业务模块可正常载入（真实 AstrBot 存在时不生效）。
+_bootstrap.ensure()
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 DEFAULT_PLUGIN_NAME = "meme_manager"
@@ -41,17 +46,21 @@ def resolve_plugin_name(plugin_name: str | None = None) -> str:
 
 
 def get_plugin_data_dir(plugin_name: str | None = None) -> Path:
-    """返回插件运行时数据目录。"""
+    """返回插件运行时数据目录。
+
+    迁移说明：原实现依赖 AstrBot 的 ``get_astrbot_plugin_data_path()``，
+    NoneBot2 线路改用 ``nb2.paths.resolve_data_dir``（localstore 优先，
+    否则回退到插件包内 ``data/``）。
+    """
     resolved_plugin_name = resolve_plugin_name(plugin_name)
     try:
-        plugin_data_root = Path(get_astrbot_plugin_data_path())
-        return (plugin_data_root / resolved_plugin_name).resolve()
+        return resolve_data_dir(resolved_plugin_name).resolve()
     except Exception:
         fallback_data_path = (
             PLUGIN_DIR / "data" / "plugin_data" / resolved_plugin_name
         ).resolve()
         print(
-            f"无法解析 AstrBot 插件数据目录，回退到: {fallback_data_path}",
+            f"无法解析插件数据目录，回退到: {fallback_data_path}",
             file=sys.stderr,
         )
         return fallback_data_path
