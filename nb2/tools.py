@@ -146,13 +146,21 @@ async def _search_memes(event: UnifiedEvent, runtime: Any, args: dict[str, Any])
         min_score=runtime.semantic_min_score,
     )
     candidates = result.get("candidates") or []
-    remember_candidates(event, candidates)
-    event.set_extra(CANDIDATES_CACHE_KEY, candidates)
+    # 检索结果只有 ``id``（``meme:<前缀>``），发送校验还需要 ``entry_id`` 与来源
+    # 表情包；用上游的 candidate_records_multi_pack 补齐，保证与 AstrBot 一致。
+    from ..backend.semantic.query import candidate_records_multi_pack
+
+    records = candidate_records_multi_pack(
+        [ctx for ctx in pack_contexts if ctx.get("pack_id") and ctx.get("pack_dir")],
+        candidates,
+    )
+    remember_candidates(event, records)
+    event.set_extra(CANDIDATES_CACHE_KEY, records)
     event.set_extra(SEARCH_USED_KEY, True)
     return ToolResult(
         ok=True,
         message=dumps_result(result),
-        data={"candidates": candidates, "reason": result.get("reason", "")},
+        data={"candidates": records, "reason": result.get("reason", "")},
     )
 
 
@@ -176,8 +184,14 @@ async def _send_meme(event: UnifiedEvent, runtime: Any, args: dict[str, Any]) ->
         event,
         ids,
         {
+            "pack_ids": pack_context.get("pack_ids") or [pack_context.get("pack_id")],
+            "pack_dirs": {
+                str(ctx.get("pack_id")): ctx.get("pack_dir")
+                for ctx in (pack_context.get("pack_contexts") or [])
+                if ctx.get("pack_id")
+            }
+            or {str(pack_context.get("pack_id")): pack_context.get("pack_dir")},
             "pack_dir": pack_context.get("pack_dir"),
-            "pack_contexts": pack_context.get("pack_contexts") or [],
         },
     )
     if not resolved:

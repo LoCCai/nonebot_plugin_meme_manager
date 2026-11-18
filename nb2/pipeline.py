@@ -1,4 +1,4 @@
-﻿"""主动配图管线：把「LLM 回复后挑图」迁移为 NoneBot2 的独立决策流程。
+"""主动配图管线：把「LLM 回复后挑图」迁移为 NoneBot2 的独立决策流程。
 
 AstrBot 的实现依赖宿主 Agent（``on_llm_response`` → ``on_decorating_result``）。
 NoneBot2 没有宿主模型，因此在 ``nb2`` 中把同一套业务能力编排成显式管线：
@@ -86,7 +86,7 @@ async def generate_reply(runtime: Any, event: UnifiedEvent, prompt: str) -> str:
 
 async def search_candidates(runtime: Any, event: UnifiedEvent, query: str, top_k: int = 3) -> list[dict]:
     """检索候选（语义索引未就绪时返回空列表）。"""
-    from ..backend.semantic.query import search_memes_multi_pack
+    from ..backend.semantic.query import candidate_records_multi_pack, search_memes_multi_pack
 
     if not runtime._semantic_pack_ready(event=event, for_direct_search=True):
         return []
@@ -94,15 +94,20 @@ async def search_candidates(runtime: Any, event: UnifiedEvent, query: str, top_k
     contexts = pack_context.get("pack_contexts") or [
         {"pack_id": pack_context.get("pack_id"), "pack_dir": pack_context.get("pack_dir")}
     ]
+    contexts = [ctx for ctx in contexts if ctx.get("pack_id") and ctx.get("pack_dir")]
     result = await search_memes_multi_pack(
-        [ctx for ctx in contexts if ctx.get("pack_id") and ctx.get("pack_dir")],
+        contexts,
         runtime.data_dir,
         query,
         runtime._resolve_embedding_provider,
         top_k=top_k,
         min_score=runtime.semantic_min_score,
     )
-    return list(result.get("candidates") or [])
+    candidates = list(result.get("candidates") or [])
+    if not candidates:
+        return []
+    # 补齐 entry_id 等字段，供后续按 ID 解析本地文件。
+    return candidate_records_multi_pack(contexts, candidates)
 
 
 async def select_images(
@@ -118,24 +123,24 @@ async def select_images(
         return []
     from ..backend.selection import SelectionTask, select_candidates
 
-    async def generate(prompt: str) -> str:
+    async def generate(prompt: str) -> Any:
+        """调用聊天模型；返回响应对象本身（``selection`` 需要 ``completion_text``）。"""
         context = getattr(runtime, "context", None)
         if not isinstance(context, LLMContext):
-            return ""
+            return None
         provider_id = str(getattr(runtime, "emotion_llm_provider_id", "") or "").strip()
         if not provider_id:
             providers = context.provider_manager.all()
             provider_id = providers[0].id if providers else ""
         if not provider_id:
-            return ""
-        response = await context.llm_generate(
+            return None
+        return await context.llm_generate(
             chat_provider_id=provider_id,
             prompt=prompt,
             temperature=0,
             max_tokens=200,
             response_format={"type": "json_object"},
         )
-        return str(getattr(response, "completion_text", "") or "")
 
     task = SelectionTask(
         kind=kind,
@@ -158,30 +163,56 @@ async def select_images(
 
 
 def resolve_image_path(runtime: Any, event: UnifiedEvent, candidate: dict) -> str | None:
-    """把候选转换为本地文件路径。"""
+    """把候选转换为本地文件路径。
+
+    ``search_index`` 的候选只带 ``entry_id`` / ``category``，没有文件名；这里按
+    ``entry_id`` 反查语义元数据得到 ``relative_path``（与上游 ``validate_selected_id``
+    的做法一致）。
+    """
     from pathlib import Path
 
     from ..backend.packs.resolver import get_pack_paths
+    from ..backend.semantic.storage import load_metadata
 
     category = str(candidate.get("category") or "").strip()
+    entry_id = str(candidate.get("entry_id") or "").strip()
     filename = str(candidate.get("filename") or "").strip()
-    if not category or not filename:
-        return None
     pack_id = str(candidate.get("_source_pack_id") or "").strip()
-    roots = []
+
+    roots: list[tuple[str, Path]] = []
     if pack_id:
         try:
-            roots.append(Path(get_pack_paths(pack_id)["memes_dir"]))
+            roots.append((pack_id, Path(get_pack_paths(pack_id)["memes_dir"])))
         except Exception:  # pragma: no cover - 防御性
             pass
     try:
-        roots.append(Path(runtime._resolve_runtime_pack_context(event=event)["memes_dir"]))
+        context = runtime._resolve_runtime_pack_context(event=event)
+        roots.append((str(context.get("pack_id") or ""), Path(context["memes_dir"])))
     except Exception:  # pragma: no cover - 防御性
         pass
-    for root in roots:
-        path = root / category / filename
-        if path.is_file():
-            return str(path)
+
+    # 语义元数据里记录了 relative_path，比按 category+filename 猜测更可靠。
+    for root_pack_id, memes_dir in roots:
+        if not entry_id:
+            break
+        try:
+            pack_dir = memes_dir.parent
+            metadata = load_metadata(pack_dir)
+            item = (metadata.get("images") or {}).get(entry_id) or {}
+            relative = str(item.get("relative_path") or "").strip()
+            if relative:
+                path = (pack_dir / relative).resolve()
+                path.relative_to(pack_dir.resolve())
+                if path.is_file():
+                    return str(path)
+        except Exception:  # pragma: no cover - 防御性
+            continue
+
+    if category and filename:
+        for _pack_id, memes_dir in roots:
+            path = memes_dir / category / filename
+            if path.is_file():
+                return str(path)
     return None
 
 

@@ -15,6 +15,7 @@ NoneBot2 没有内置 LLM 运行时，因此这里提供等价实现：
 from __future__ import annotations
 
 import base64
+import json
 import mimetypes
 import os
 from dataclasses import dataclass, field
@@ -73,6 +74,12 @@ class LLMResponse:
     completion_text: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
     usage: dict[str, Any] = field(default_factory=dict)
+    #: 模型请求的工具名列表（AstrBot 归一化字段，业务层据此判断是否走了工具模式）。
+    tools_call_name: list[str] = field(default_factory=list)
+    #: 与 ``tools_call_name`` 一一对应的参数（已解析为 dict 或原始字符串）。
+    tools_call_args: list[Any] = field(default_factory=list)
+    #: 原始 tool_calls（保留 id 与 function 结构）。
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -83,21 +90,44 @@ class LLMResponse:
 
 
 class ProviderManager:
-    """提供方注册表（对齐 ``context.provider_manager`` 的最小表面）。"""
+    """提供方注册表（对齐 ``context.provider_manager`` 的最小表面）。
 
-    def __init__(self, providers: list[ProviderConfig] | None = None) -> None:
-        self._providers: dict[str, ProviderConfig] = {}
-        self.inst_map: dict[str, ProviderConfig] = self._providers
+    既接受本模块的 :class:`ProviderConfig`，也接受任意外部提供方对象
+    （例如只实现 ``get_embedding`` 的向量模型），以 ID 为键索引。
+    """
+
+    def __init__(self, providers: list[Any] | None = None) -> None:
+        self._providers: dict[str, Any] = {}
+        self.inst_map: dict[str, Any] = self._providers
         for provider in providers or []:
             self.register(provider)
 
-    def register(self, provider: ProviderConfig) -> None:
-        self._providers[provider.id] = provider
+    @staticmethod
+    def _provider_id(provider: Any) -> str:
+        provider_id = str(getattr(provider, "id", "") or "").strip()
+        if provider_id:
+            return provider_id
+        config = getattr(provider, "provider_config", None)
+        if isinstance(config, dict) and config.get("id"):
+            return str(config["id"])
+        meta = getattr(provider, "meta", None)
+        if callable(meta):
+            try:
+                return str(getattr(meta(), "id", "") or "")
+            except Exception:
+                return ""
+        return ""
 
-    def get(self, provider_id: str) -> ProviderConfig | None:
+    def register(self, provider: Any) -> None:
+        provider_id = self._provider_id(provider)
+        if not provider_id:
+            raise ValueError("提供方缺少 id，无法注册")
+        self._providers[provider_id] = provider
+
+    def get(self, provider_id: str) -> Any:
         return self._providers.get(str(provider_id or ""))
 
-    def all(self) -> list[ProviderConfig]:
+    def all(self) -> list[Any]:
         return list(self._providers.values())
 
     def __len__(self) -> int:
@@ -113,17 +143,50 @@ class LLMContext:
     只实现业务层实际使用的接口，避免伪装成 AstrBot 内核。
     """
 
-    def __init__(self, providers: list[ProviderConfig] | None = None) -> None:
+    def __init__(self, providers: list[Any] | None = None) -> None:
         self.provider_manager = ProviderManager(providers)
         self._session: aiohttp.ClientSession | None = None
 
     # ------------------------------------------------------------ 注册与查询
-    def register_provider(self, provider: ProviderConfig) -> None:
+    def register_provider(self, provider: Any) -> None:
         self.provider_manager.register(provider)
 
-    def get_provider_by_id(self, provider_id: str) -> ProviderConfig | None:
+    def get_provider_by_id(self, provider_id: str) -> Any:
         """按 ID 取提供方（业务层用它判断模态能力）。"""
         return self.provider_manager.get(provider_id)
+
+    def get_all_embedding_providers(self) -> list[Any]:
+        """列出可用的向量提供方（上游语义任务在未配置时自动挑选）。
+
+        判定标准：声明了 ``embedding`` 模态，或提供 ``get_embedding`` /
+        ``get_embeddings`` 方法。
+        """
+        candidates: list[Any] = []
+        for provider in self.provider_manager.all():
+            config = getattr(provider, "provider_config", {}) or {}
+            modalities = config.get("modalities") if isinstance(config, dict) else None
+            declared = {
+                str(item).lower() for item in (modalities or [])
+            } if isinstance(modalities, list) else set()
+            if (
+                "embedding" in declared
+                or callable(getattr(provider, "get_embedding", None))
+                or callable(getattr(provider, "get_embeddings", None))
+            ):
+                candidates.append(provider)
+        return candidates
+
+    def get_using_provider(self, umo: str = "") -> Any:
+        """返回默认聊天提供方（NoneBot2 路线没有会话级路由）。"""
+        for provider in self.provider_manager.all():
+            config = getattr(provider, "provider_config", {}) or {}
+            modalities = config.get("modalities") if isinstance(config, dict) else None
+            if isinstance(modalities, list) and "image" in {
+                str(item).lower() for item in modalities
+            }:
+                return provider
+        providers = self.provider_manager.all()
+        return providers[0] if providers else None
 
     def has_providers(self) -> bool:
         return bool(len(self.provider_manager))
@@ -152,6 +215,14 @@ class LLMContext:
             payload["max_tokens"] = kwargs["max_tokens"]
         if kwargs.get("response_format") is not None:
             payload["response_format"] = kwargs["response_format"]
+
+        # 工具调用：把上游的 ToolSet / 列表 / 单工具统一转换为 OpenAI tools 协议。
+        tools = self._build_tools(kwargs.get("tools"))
+        if tools:
+            payload["tools"] = tools
+            tool_choice = kwargs.get("tool_choice")
+            if tool_choice is not None:
+                payload["tool_choice"] = tool_choice
 
         data = await self._post(provider, payload)
         return self._parse_response(data)
@@ -221,9 +292,66 @@ class LLMContext:
         return f"data:{mime};base64,{encoded}"
 
     @staticmethod
+    def _build_tools(tools: Any) -> list[dict[str, Any]]:
+        """把上游 ToolSet / 工具列表转换为 OpenAI ``tools`` 协议。
+
+        支持三种输入：
+        * ``None``（无工具）；
+        * 带 ``.tools`` 属性的 ``ToolSet``（上游 ``_build_caption_tool_set``）；
+        * 单个工具或工具列表（``FunctionTool`` 实例或已就绪的 schema dict）。
+        """
+
+        def _to_schema(tool: Any) -> dict[str, Any] | None:
+            if isinstance(tool, dict):
+                if tool.get("type") == "function" and "function" in tool:
+                    return tool
+                name = tool.get("name")
+                if name:
+                    return {
+                        "type": "function",
+                        "function": {
+                            "name": str(name),
+                            "description": str(tool.get("description") or ""),
+                            "parameters": tool.get("parameters") or {},
+                        },
+                    }
+                return None
+            name = getattr(tool, "name", None)
+            if not name:
+                return None
+            parameters = getattr(tool, "parameters", None) or {}
+            if hasattr(parameters, "model_dump"):
+                parameters = parameters.model_dump()
+            elif not isinstance(parameters, dict):
+                parameters = {}
+            return {
+                "type": "function",
+                "function": {
+                    "name": str(name),
+                    "description": str(getattr(tool, "description", "") or ""),
+                    "parameters": parameters,
+                },
+            }
+
+        if tools is None:
+            return []
+        candidates: list[Any]
+        if isinstance(tools, dict):
+            candidates = [tools]
+        elif isinstance(tools, (list, tuple, set)):
+            candidates = list(tools)
+        else:
+            inner = getattr(tools, "tools", None)
+            candidates = list(inner) if isinstance(inner, (list, tuple, set)) else [tools]
+
+        schemas = [_to_schema(tool) for tool in candidates]
+        return [schema for schema in schemas if schema]
+
+    @staticmethod
     def _parse_response(data: dict[str, Any]) -> LLMResponse:
         choices = data.get("choices") or []
         text = ""
+        tool_calls: list[dict[str, Any]] = []
         if choices:
             message = choices[0].get("message") or {}
             content = message.get("content")
@@ -235,10 +363,33 @@ class LLMContext:
                 )
             else:
                 text = str(content or "")
+            raw_calls = message.get("tool_calls") or []
+            if isinstance(raw_calls, list):
+                tool_calls = [call for call in raw_calls if isinstance(call, dict)]
+
+        # 归一化成 AstrBot 的 tools_call_name / tools_call_args 结构，
+        # 上游 backend/semantic/caption.py 依赖这两个字段。
+        names: list[str] = []
+        arguments: list[Any] = []
+        for call in tool_calls:
+            function = call.get("function") or {}
+            names.append(str(function.get("name") or ""))
+            raw_args = function.get("arguments")
+            if isinstance(raw_args, str):
+                try:
+                    arguments.append(json.loads(raw_args))
+                except Exception:
+                    arguments.append(raw_args)
+            else:
+                arguments.append(raw_args if raw_args is not None else {})
+
         return LLMResponse(
             completion_text=text,
             raw=data,
             usage=dict(data.get("usage") or {}),
+            tools_call_name=names,
+            tools_call_args=arguments,
+            tool_calls=tool_calls,
         )
 
 
