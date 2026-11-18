@@ -100,13 +100,20 @@ def _setup_driver_hooks() -> None:
 
     @driver.on_startup
     async def _on_startup() -> None:
-        """驱动启动后初始化运行时、matcher 与 WebUI。"""
+        """驱动启动后初始化运行时、matcher、WebUI 与可选集成。"""
         register_matchers()
         runtime = get_runtime()
         try:
             await mount_webui(runtime)
         except Exception as exc:  # pragma: no cover - WebUI 为可选能力
             logger.warning("挂载 WebUI 失败（不影响机器人指令）：{}", exc)
+        # 可选集成：安装了 MoEllmChats 时把表情工具注册给它；未安装则静默跳过。
+        try:
+            from .nb2.integrations import moellm
+
+            moellm.register()
+        except Exception as exc:  # pragma: no cover - 防御性
+            logger.debug("MoEllmChats 集成未启用：{}", exc)
         try:
             await runtime.startup()
         except Exception as exc:  # pragma: no cover - 防御性
@@ -115,6 +122,12 @@ def _setup_driver_hooks() -> None:
     @driver.on_shutdown
     async def _on_shutdown() -> None:
         """驱动关闭时释放后台任务。"""
+        try:
+            from .nb2.integrations import moellm
+
+            moellm.unregister()
+        except Exception:  # pragma: no cover - 防御性
+            pass
         runtime = get_runtime_or_none()
         if runtime is not None:
             try:
