@@ -108,6 +108,12 @@ async function initPluginConfig() {
   };
   const groups = [
     {
+      id: "nonebot-host",
+      category: "sending",
+      title: "聊天插件接入",
+      prefixes: ["integration."],
+    },
+    {
       id: "appearance",
       category: "sending",
       title: "出现时机",
@@ -306,7 +312,7 @@ async function initPluginConfig() {
       when: "reply-category",
       category: "prompts",
       title: "分类提示词",
-      prefixes: ["generation.prompt.head", "generation.prompt.tail"],
+      prefixes: ["generation.prompt.head", "generation.prompt.tail", "generation.prompt.lexicon_enabled"],
     },
     {
       id: "quantity-guidance",

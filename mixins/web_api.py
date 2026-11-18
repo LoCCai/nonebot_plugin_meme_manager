@@ -4208,6 +4208,9 @@ class WebAPIMixin:
                 return jsonify(snapshot), 200
             if not isinstance(data, dict):
                 return jsonify({"message": "请求格式不正确。"}), 400
+            busy = getattr(self, 'settings_busy', None)
+            if callable(busy) and busy():
+                return jsonify({"message": "正在处理或收集表情，请等待完成或结束手动收集后保存设置。"}), 409
             if data.get("revision") != snapshot["revision"]:
                 return jsonify(
                     {
@@ -4253,7 +4256,8 @@ class WebAPIMixin:
             # 在让出执行权之前，使用 AstrBot 的原子配置写入器同步保存。
             try:
                 self.config.clear()
-                self.config.save_config(updated)
+                if self.config.save_config(updated) is False:
+                    raise OSError('config save failed')
             except Exception:
                 self.config.clear()
                 self.config.update(values)

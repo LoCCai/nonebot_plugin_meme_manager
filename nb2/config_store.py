@@ -210,7 +210,13 @@ class PluginConfig(dict):
         """剔除不在 schema 中的键，并修正枚举越界值。"""
         if not self.schema:
             return
+        # NoneBot host extensions are intentionally absent from the AstrBot
+        # schema, but are consumed by MemeRuntime. Keep only known extensions.
+        extensions = {key: copy.deepcopy(self[key]) for key in ('llm', 'providers', 'webui', 'integration')
+                      if key not in self.schema and key in self
+                      and isinstance(self[key], (dict, list))}
         self._normalize_node(self, self.schema)
+        self.update(extensions)
 
     def _normalize_node(self, current: dict[str, Any], spec: dict[str, Any]) -> None:
         for key in tuple(current):

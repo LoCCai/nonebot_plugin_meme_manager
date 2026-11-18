@@ -703,6 +703,51 @@ class MemeRuntime:
         return bool(context.get("pack_ids")) and self._semantic_pack_ready(event=event)
 
     # ------------------------------------------------------------ 生命周期
+    def settings_busy(self) -> bool:
+        """Do not discard in-flight collection or file work during reconfiguration."""
+        auto = self.auto_collect_manager
+        return bool(
+            auto.queue.qsize() or auto._inflight or auto._snapshot_tasks
+            or auto._embedding_tasks or auto._auto_accept_tasks
+            or self.manual_collect_manager.sessions
+            or self.upload_states or self.pending_images
+            or self.semantic_task_manager.active_pack_tasks()
+            or self.semantic_task_manager._external_pack_operations
+            or any(not task.done() for task in self._community_install_tasks)
+            or any(not task.done() for task in getattr(self, '_community_update_tasks', ()))
+            or (self._semantic_initial_rebuild_task is not None and not self._semantic_initial_rebuild_task.done())
+            or (self.img_sync is not None and getattr(self.img_sync, 'sync_process', None)
+                and self.img_sync.sync_process.is_alive())
+        )
+
+    async def reload_settings(self) -> None:
+        """Apply persisted settings to the same instance used by commands and WebUI.
+
+        The API checks busy state before writing. Keep completed job receipts,
+        host bridge bindings and operation locks; rebuild configuration caches
+        and idle managers without remounting any HTTP routes.
+        """
+        if self.settings_busy():
+            raise RuntimeError('表情处理任务尚未完成，请稍后应用设置')
+        config = PluginConfig.load(self.config.path, schema=self.config.schema)
+        candidate = type(self)(plugin_config=config, data_dir=self.data_dir)
+        preserved = {key: value for key, value in self.__dict__.items()
+                     if key.startswith(('_community_', '_runtime_file_', '_pack_file_'))
+                     or key in {'_star_manager', '_delivery_history'}}
+        for key in ('_star_manager', 'get_registered_star'):
+            if hasattr(self.context, key):
+                setattr(candidate.context, key, getattr(self.context, key))
+        await self.shutdown()
+        self.__dict__.update(candidate.__dict__)
+        self.__dict__.update(preserved)
+        self.auto_collect_manager.plugin = self
+        # Both optional tools and normal message pipelines resolve this instance.
+        from .integrations import moellm
+        moellm.unregister()
+        if self.semantic_enabled and self._read_bool(('integration', 'semantic_tools_enabled'), False):
+            moellm.register()
+        await self.startup()
+
     async def startup(self) -> None:
         """插件启动：启动自动收集与首次语义重建。"""
         try:
@@ -724,9 +769,11 @@ class MemeRuntime:
             except (asyncio.CancelledError, Exception):
                 pass
         try:
-            await self.auto_collect_manager.stop()
+            await self.auto_collect_manager.close()
         except Exception as exc:  # pragma: no cover - 防御性
             logger.debug("停止自动收集失败：{}", exc)
+        await self.semantic_task_manager.close()
+        await self.decision_client.close()
         close = getattr(self.context, "close", None)
         if callable(close):
             try:

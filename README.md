@@ -1,6 +1,8 @@
 # 表情包管理器（NoneBot2 线路）
 
-> 这是 `LoCCai/nonebot_plugin_meme_manager` 的 **NoneBot2 适配线路**（`main` 分支）。
+> 这是 `LoCCai/nonebot_plugin_meme_manager` 的 **七七 / QWeb 专用线路**（`qiqi` 分支），
+> 由原 `feat/moellm-library-20261118` 更名，包含 LLM 分类词库接入与 QWeb 管理适配。
+> **通用 NoneBot2 插件继续使用默认 `main` 分支**，不依赖七七或 QWeb。
 > 原始 AstrBot 插件仓库为 `anka-afk/astrbot_plugin_meme_manager`，对应 `astrbot` 分支，
 > 仅用于上游同步。本分支支持 **OneBot v11 / OneBot v12 / QQ 官方机器人**。
 
@@ -63,6 +65,12 @@ pip install "nonebot_plugin_meme_manager[qq]"         # QQ 官方机器人
 时才同时允许平台管理员/群主管理共享图库。
 
 ## WebUI
+
+七七部署通过 QWeb 管理员控制台的「表情资源管理」使用完整 WebUI，入口为
+`/qweb/admin/memes`。宿主对页面、图片与接口统一执行管理员登录、写入校验及审计，
+复用当前插件运行时和数据目录；无需开启下述独立 WebUI。LLM 随文表情使用
+`nonebot-plugin-moellmchats` 的 `qiqi` 分支，模型与账户设置仍由宿主管理。
+本仓库不携带站点凭据。生产依赖请固定经过验收的提交 SHA。
 
 WebUI 默认关闭；仅在入口已配置访问认证的情况下开启 `webui.enabled`，重启后
 访问 `http://<host>:<port>/meme_manager/`。接口本身不提供用户认证，不要直接暴露公网。

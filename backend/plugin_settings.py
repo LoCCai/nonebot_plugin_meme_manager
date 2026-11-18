@@ -107,7 +107,10 @@ def validate_settings_changes(
     if not isinstance(changes, dict) or not changes:
         raise ValueError("没有需要保存的配置更改。")
     allowed = {field["path"]: field for field in fields}
-    updated = {}
+    # Keep only the explicit NoneBot provider extensions outside the schema;
+    # obsolete legacy settings still follow the original cleanup contract.
+    updated = {key: copy.deepcopy(values[key]) for key in ('llm', 'providers')
+               if key not in schema and isinstance(values.get(key), (dict, list))}
     pending = [(updated, schema)]
     while pending:
         node, items = pending.pop()

@@ -70,8 +70,7 @@ class _StarManagerStub:
     """NoneBot2 没有 AstrBot 的插件管理器；用最小桩满足设置页的保存流程。
 
     上游设置页保存后调用 ``await manager.reload(PLUGIN_NAME)`` 让新配置生效。
-    在 NoneBot2 线路里配置由 :class:`PluginConfig` 直接持有并已落盘，业务层
-    每次读取都走 ``runtime._read_config_value``，因此「重载」是空操作。
+    NoneBot2 线路更新同一个运行时的配置缓存与空闲管理器，不重启 Bot 或挂载路由。
     """
 
     def __init__(self, owner: Any) -> None:
@@ -79,9 +78,7 @@ class _StarManagerStub:
 
     async def reload(self, name: str = "") -> tuple[bool, Any]:
         try:
-            config = getattr(self._owner, "config", None)
-            if config is not None and hasattr(config, "save"):
-                config.save()
+            await self._owner.reload_settings()
         except Exception as exc:  # pragma: no cover - 防御性
             logger.warning("保存配置失败：{}", exc)
             return False, exc
@@ -137,10 +134,10 @@ def import_webapi_mixin(runtime: Any) -> Any:
             return _StarStub(self)
 
         async def reload_star(self, name: str = "") -> tuple[bool, Any]:
-            """配置已由 ``PluginConfig.save()`` 直接落盘，无需重载插件。"""
+            """更新现有运行时；不重启 Bot 或打开独立 WebUI。"""
             owner = object.__getattribute__(self, "_BoundWebAPI__owner")
             try:
-                owner.config.save()
+                await owner.reload_settings()
             except Exception as exc:  # pragma: no cover - 防御性
                 return False, exc
             return True, None
