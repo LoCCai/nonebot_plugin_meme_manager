@@ -66,6 +66,36 @@ def install_quart_shim() -> None:
     _INSTALLED = True
 
 
+class _StarManagerStub:
+    """NoneBot2 没有 AstrBot 的插件管理器；用最小桩满足设置页的保存流程。
+
+    上游设置页保存后调用 ``await manager.reload(PLUGIN_NAME)`` 让新配置生效。
+    在 NoneBot2 线路里配置由 :class:`PluginConfig` 直接持有并已落盘，业务层
+    每次读取都走 ``runtime._read_config_value``，因此「重载」是空操作。
+    """
+
+    def __init__(self, owner: Any) -> None:
+        self._owner = owner
+
+    async def reload(self, name: str = "") -> tuple[bool, Any]:
+        try:
+            config = getattr(self._owner, "config", None)
+            if config is not None and hasattr(config, "save"):
+                config.save()
+        except Exception as exc:  # pragma: no cover - 防御性
+            logger.warning("保存配置失败：{}", exc)
+            return False, exc
+        return True, None
+
+
+class _StarStub:
+    """``get_registered_star`` 的返回值：需要 ``star_cls`` 与绑定实例一致。"""
+
+    def __init__(self, star_cls: Any) -> None:
+        self.star_cls = star_cls
+        self.name = "meme_manager"
+
+
 def import_webapi_mixin(runtime: Any) -> Any:
     """导入上游 ``WebAPIMixin``，并把运行时状态注入为 mixin 的 ``self``。
 
@@ -93,7 +123,43 @@ def import_webapi_mixin(runtime: Any) -> Any:
             except AttributeError:
                 raise AttributeError(name) from None
 
-    return _BoundWebAPI(runtime)
+        # ---- 上游设置页依赖的 AstrBot 上下文接口（NoneBot2 无插件管理器）----
+        def get_all_providers(self) -> list[Any]:
+            owner = object.__getattribute__(self, "_BoundWebAPI__owner")
+            return list(getattr(owner.context, "get_all_providers", list)())
+
+        def get_all_embedding_providers(self) -> list[Any]:
+            owner = object.__getattribute__(self, "_BoundWebAPI__owner")
+            return list(getattr(owner.context, "get_all_embedding_providers", list)())
+
+        def get_registered_star(self, name: str = "") -> Any:
+            """NoneBot2 没有插件管理器；返回自身以便设置页走「已注册」分支。"""
+            return _StarStub(self)
+
+        async def reload_star(self, name: str = "") -> tuple[bool, Any]:
+            """配置已由 ``PluginConfig.save()`` 直接落盘，无需重载插件。"""
+            owner = object.__getattribute__(self, "_BoundWebAPI__owner")
+            try:
+                owner.config.save()
+            except Exception as exc:  # pragma: no cover - 防御性
+                return False, exc
+            return True, None
+
+    bound = _BoundWebAPI(runtime)
+
+    # 上游设置页写的是 ``self.context._star_manager`` / ``self.context.get_registered_star``，
+    # 而 ``self.context`` 解析到的是运行时持有的 LLM 上下文。因此把这两个接口挂在
+    # **上下文对象**上（同一份 bound 实例贯穿全部请求，``star_cls is self`` 恒成立）。
+    context = getattr(runtime, "context", None)
+    if context is not None:
+        try:
+            setattr(context, "_star_manager", _StarManagerStub(runtime))
+            setattr(context, "get_registered_star", lambda name="": _StarStub(bound))
+        except Exception as exc:  # pragma: no cover - 防御性
+            logger.debug("为 WebUI 注入插件管理器桩失败：{}", exc)
+    runtime._star_manager = _StarManagerStub(runtime)  # type: ignore[attr-defined]
+
+    return bound
 
 
 def register_routes(router: Any, runtime: Any) -> int:

@@ -14,6 +14,20 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.10", "3.12"]
+        # 语义索引依赖 faiss；Windows 无 3.10 wheel，故仅在非该组合下安装。
+        include:
+          - os: ubuntu-latest
+            python-version: "3.10"
+            faiss: "--only-binary=:all: faiss-cpu"
+          - os: ubuntu-latest
+            python-version: "3.12"
+            faiss: "--only-binary=:all: faiss-cpu"
+          - os: windows-latest
+            python-version: "3.10"
+            faiss: ""
+          - os: windows-latest
+            python-version: "3.12"
+            faiss: "--only-binary=:all: faiss-cpu"
 
     steps:
       - uses: actions/checkout@v4
@@ -27,13 +41,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install "nonebot2[fastapi]" nonebot-adapter-onebot nonebot-adapter-qq \
-            pytest pytest-asyncio aiohttp pillow numpy requests urllib3 certifi tqdm werkzeug
+            pytest pytest-asyncio aiohttp pillow numpy requests urllib3 certifi tqdm werkzeug httpx2
+          python -m pip install ${{ matrix.faiss }}
 
       - name: 运行测试
         run: python -m pytest tests/nb2 -q
 
       - name: 插件加载冒烟
         run: python tools/smoke_load.py
+
+      - name: WebUI 端到端自检
+        run: python tools/check_webui.py
 
   lint:
     runs-on: ubuntu-latest
@@ -42,32 +60,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: 语法检查
+      - name: 语法编译检查
         run: |
-          python -m compileall -q nb2 backend image_host config.py utils.py
-      - name: 未使用的相对导入深度检查
-        run: |
-          python - <<'PY'
-          import pathlib, re, sys
-          root = pathlib.Path(".")
-          bad = []
-          for path in root.rglob("*.py"):
-              if ".git" in path.parts or "tests" in path.parts:
-                  continue
-              text = path.read_text(encoding="utf-8", errors="ignore")
-              for match in re.finditer(r"^from (\.+)(\w[\w.]*)", text, re.M):
-                  depth, module = len(match.group(1)), match.group(2)
-                  parent = path.parent
-                  ok = True
-                  for _ in range(depth - 1):
-                      if parent.name == "" or parent == root:
-                          ok = False
-                          break
-                      parent = parent.parent
-                  if not ok or not (parent / module.split(".")[0]).exists():
-                      bad.append(f"{path}: from {'.' * depth}{module}")
-          if bad:
-              print("\n".join(bad))
-              sys.exit(1)
-          print("相对导入检查通过")
-          PY
+          python -m pip install --upgrade pip
+          python -m compileall -q nb2 backend image_host config.py utils.py tools
+      - name: 相对导入连通性检查
+        run: python tools/check_imports.py

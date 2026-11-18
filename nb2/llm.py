@@ -37,6 +37,18 @@ STRUCTURED_OUTPUT_ERROR_HINTS = (
 
 
 @dataclass
+class _ProviderMeta:
+    """上游设置页需要的提供方元信息形状（``provider.meta()``）。"""
+
+    id: str = ""
+    model: str = ""
+    type: str = "openai"
+
+    def model_dump(self) -> dict[str, Any]:
+        return {"id": self.id, "model": self.model, "type": self.type}
+
+
+@dataclass
 class ProviderConfig:
     """单个提供方的配置描述。"""
 
@@ -49,6 +61,10 @@ class ProviderConfig:
     modalities: list[str] = field(default_factory=lambda: ["text"])
     timeout: int = 60
     max_retries: int = 1
+
+    def meta(self) -> _ProviderMeta:
+        """返回元信息对象（上游设置页调用 ``provider.meta()``）。"""
+        return _ProviderMeta(id=self.id, model=self.model, type=self.provider_type)
 
     @property
     def provider_config(self) -> dict[str, Any]:
@@ -187,6 +203,19 @@ class LLMContext:
                 return provider
         providers = self.provider_manager.all()
         return providers[0] if providers else None
+
+    def get_all_providers(self) -> list[Any]:
+        """列出全部聊天提供方（上游设置页用它填充模型下拉框）。"""
+        return self.provider_manager.all()
+
+    def provider_meta(self, provider: Any) -> Any:
+        """返回带 ``id`` / ``model`` 的元信息对象（设置页序列化用）。"""
+        config = getattr(provider, "provider_config", {}) or {}
+        config = config if isinstance(config, dict) else {}
+        return _ProviderMeta(
+            id=str(config.get("id") or getattr(provider, "id", "") or ""),
+            model=str(config.get("model") or getattr(provider, "model", "") or ""),
+        )
 
     def has_providers(self) -> bool:
         return bool(len(self.provider_manager))

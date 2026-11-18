@@ -55,7 +55,17 @@ def _options(spec: Any) -> list[Any] | None:
 
 
 class PluginConfig(dict):
-    """带 schema 的配置对象（兼容 AstrBot ``AstrBotConfig`` 用法）。"""
+    """带 schema 的配置对象（兼容 AstrBot ``AstrBotConfig`` 用法）。
+
+    除字典语义外，还提供上游 WebUI 设置页依赖的三个属性：
+
+    * ``config_path``：配置文件路径（设置页读取原始 JSON 计算 revision）；
+    * ``schema``：``_conf_schema.json`` 内容（字段描述与校验依据）；
+    * ``save_config(values)``：原子写回给定配置。
+    """
+
+    #: AstrBot 兼容别名：设置页按 ``config.config_path`` 读取文件。
+    config_path: Path
 
     def __init__(
         self,
@@ -64,6 +74,7 @@ class PluginConfig(dict):
         data: dict[str, Any] | None = None,
     ) -> None:
         self.path = Path(path)
+        self.config_path = self.path
         self.schema: dict[str, Any] = schema or {}
         self._defaults = build_defaults(self.schema)
         super().__init__(self._defaults)
@@ -110,10 +121,23 @@ class PluginConfig(dict):
             return {}
 
     def save(self) -> bool:
-        """原子写回配置文件。"""
+        """原子写回当前内存中的配置。"""
+        return self._write(dict(self))
+
+    def save_config(self, values: dict[str, Any] | None = None) -> bool:
+        """兼容 AstrBot 的写入接口：可传入完整配置，否则写回当前内容。"""
+        payload = dict(self) if values is None else dict(values)
+        if self._write(payload):
+            self.clear()
+            self.update(payload)
+            return True
+        return False
+
+    def _write(self, payload: dict[str, Any]) -> bool:
+        """原子写配置文件。"""
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            payload = json.dumps(dict(self), ensure_ascii=False, indent=2)
+            text = json.dumps(payload, ensure_ascii=False, indent=2)
             with tempfile.NamedTemporaryFile(
                 "w",
                 encoding="utf-8",
@@ -121,16 +145,13 @@ class PluginConfig(dict):
                 delete=False,
                 suffix=".tmp",
             ) as handle:
-                handle.write(payload)
+                handle.write(text)
                 tmp_path = handle.name
             os.replace(tmp_path, self.path)
             return True
         except Exception as exc:
             logger.error("保存配置失败：{} ({})", self.path, exc)
             return False
-
-    # 兼容 AstrBot 的写入接口名
-    save_config = save
 
     # ------------------------------------------------------------ 读取
     def read(self, path: tuple[str, ...] | list[str] | str, default: Any = None) -> Any:

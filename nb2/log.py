@@ -17,17 +17,30 @@ except Exception:  # pragma: no cover - 未安装 NoneBot2 时回退标准库
 
 
 def _render(message: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:
+    """渲染日志模板。
+
+    业务层混用两种占位风格，必须**按占位符形态**选择渲染方式：
+    ``str.format`` 对没有 ``{}`` 的模板会原样返回，导致 ``"%s"`` 风格的日志
+    丢失参数（排查时看不到真实异常）。
+    """
+    text = str(message)
     if not args and not kwargs:
-        return str(message)
+        return text
+    if "{" in text and not text.startswith("%"):
+        try:
+            return text.format(*args, **kwargs)
+        except Exception:
+            pass
+    if "%" in text:
+        try:
+            return text % args
+        except Exception:
+            pass
     try:
-        return str(message).format(*args, **kwargs)
+        return text.format(*args, **kwargs)
     except Exception:
         pass
-    try:
-        return str(message) % args
-    except Exception:
-        pass
-    parts = [str(message), *(str(arg) for arg in args)]
+    parts = [text, *(str(arg) for arg in args)]
     return " ".join(parts)
 
 

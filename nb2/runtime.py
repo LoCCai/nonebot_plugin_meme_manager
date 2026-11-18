@@ -265,7 +265,9 @@ class MemeRuntime:
         self._semantic_initial_rebuild_task: asyncio.Task | None = None
 
         # WebUI 运行时状态
-        self._runtime_file_lock: asyncio.Lock | None = None
+        # 注意：上游 web_api 用 ``if not hasattr(self, "_runtime_file_lock"): self._runtime_file_lock = asyncio.Lock()``
+        # 惰性创建这把锁。若这里预先赋值成 ``None``，``hasattr`` 会通过而锁是 None，
+        # 导致 ``async with None`` 抛 TypeError。因此**不要**在这里初始化它。
         self._delivery_history = None
 
         try:
