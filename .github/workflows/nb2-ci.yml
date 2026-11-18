@@ -12,22 +12,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ["3.10", "3.12"]
-        # 语义索引依赖 faiss；Windows 无 3.10 wheel，故仅在非该组合下安装。
+        # 语义索引依赖 faiss；Windows 无 3.10 的二进制 wheel。
         include:
           - os: ubuntu-latest
             python-version: "3.10"
-            faiss: "--only-binary=:all: faiss-cpu"
+            install-faiss: "true"
           - os: ubuntu-latest
             python-version: "3.12"
-            faiss: "--only-binary=:all: faiss-cpu"
+            install-faiss: "true"
           - os: windows-latest
             python-version: "3.10"
-            faiss: ""
+            install-faiss: "false"
           - os: windows-latest
             python-version: "3.12"
-            faiss: "--only-binary=:all: faiss-cpu"
+            install-faiss: "true"
 
     steps:
       - uses: actions/checkout@v4
@@ -37,12 +35,17 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: 升级 pip
+        run: python -m pip install --upgrade pip
+
+      # 单行写法：Windows runner 默认 shell 是 PowerShell，
+      # bash 的反斜杠续行会被当成参数传给 pip（报 Directory 不可安装）。
       - name: 安装依赖
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install "nonebot2[fastapi]" nonebot-adapter-onebot nonebot-adapter-qq \
-            pytest pytest-asyncio aiohttp pillow numpy requests urllib3 certifi tqdm werkzeug httpx2
-          python -m pip install ${{ matrix.faiss }}
+        run: python -m pip install "nonebot2[fastapi]" nonebot-adapter-onebot nonebot-adapter-qq pytest pytest-asyncio aiohttp pillow numpy requests urllib3 certifi tqdm werkzeug httpx2
+
+      - name: 安装 faiss（语义检索）
+        if: matrix.install-faiss == 'true'
+        run: "python -m pip install --only-binary=:all: faiss-cpu"
 
       - name: 运行测试
         run: python -m pytest tests/nb2 -q
@@ -57,12 +60,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: 安装校验依赖
+        run: python -m pip install pyyaml
+
       - name: 语法编译检查
-        run: |
-          python -m pip install --upgrade pip
-          python -m compileall -q nb2 backend image_host config.py utils.py tools
+        run: python -m compileall -q nb2 backend image_host config.py utils.py tools
+
       - name: 相对导入连通性检查
         run: python tools/check_imports.py
+
+      - name: 工作流自检
+        run: python tools/check_workflows.py
