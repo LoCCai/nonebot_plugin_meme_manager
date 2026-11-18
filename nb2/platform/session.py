@@ -1,4 +1,4 @@
-"""多轮交互等待器（AstrBot ``session_waiter`` 的 NoneBot2 实现）。
+﻿"""多轮交互等待器（AstrBot ``session_waiter`` 的 NoneBot2 实现）。
 
 原插件用 ``@session_waiter(timeout=..., record_history_chains=False)`` 装饰
 协程，然后以 ``await waiter(event, filter)`` 的形式等待下一条消息。NoneBot2
@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-from .log import logger
+from ..log import logger
 
 #: 等待超时抛出（与 AstrBot 一致，使用内置 ``TimeoutError``）。
 WAIT_TIMEOUT = TimeoutError

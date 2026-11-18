@@ -1,4 +1,4 @@
-﻿"""插件运行时：MemeSender.__init__ 的 NoneBot2 移植。
+"""插件运行时：MemeSender.__init__ 的 NoneBot2 移植。
 
 原 AstrBot 插件把「配置读取 + 各类管理器实例化 + 提示词构建」全部塞在
 ``MemeSender.__init__`` 里，并混用 ``Star`` 基类与 mixin。这里把这些**与协议无关**
@@ -272,6 +272,11 @@ class MemeRuntime:
             self._reload_personas()
         except Exception as exc:  # pragma: no cover - 数据目录首次创建时
             logger.warning("初始化表情包分类提示词失败：{}", exc)
+
+        # 语义锁守卫等便捷方法（等价于上游 WebAPI/命令 mixin 的同名 helper）。
+        from . import guards
+
+        guards.install(type(self))
 
     # ------------------------------------------------------------ 配置读取
     def _bootstrap_layout(self) -> None:

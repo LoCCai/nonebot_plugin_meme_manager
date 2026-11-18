@@ -16,6 +16,10 @@ def ensure() -> bool:
     global _installed
     if _installed is None:
         _installed = _compat.install()
+        # 业务层以 AstrBot 图片组件的接口处理图片，这里补齐 Segment 的等价能力。
+        from . import media
+
+        media.install()
     return _installed
 
 

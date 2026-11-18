@@ -1,0 +1,26 @@
+"""NoneBot2 matcher 集合。
+
+导入本模块**不会**注册 matcher（注册需要已初始化的驱动）；由插件入口在
+驱动启动阶段调用 :func:`register_all`。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from . import commands, pipeline
+
+
+def register_all() -> dict[str, Any]:
+    """注册命令与管线 matcher。
+
+    Returns:
+        ``{"commands": {子命令: matcher}, "pipeline": [matcher]}``。
+    """
+    return {
+        "commands": commands.register_all(),
+        "pipeline": pipeline.register(),
+    }
+
+
+__all__ = ["commands", "pipeline", "register_all"]
