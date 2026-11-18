@@ -132,16 +132,39 @@ UnifiedMessage(segments)    # 提供 plain_text / images() / first_image()
 
 ## 6. 阶段计划
 
-| 阶段 | 内容 | 验收 |
-| --- | --- | --- |
-| **P0 分支** ✅ | `origin`→`upstream`；`main`→`astrbot`（track `upstream/main`）；`astrbot` 基点新建 `main` | `git branch -vv` 显示两条线路 |
-| **P1 骨架** | `nb2/` 目录、`log.py`、`config_store.py`、`pyproject.toml`、根 `__init__.py` 入口、数据目录 | `nonebot.load_plugin()` 成功、`/meme_manager` 可访问 |
-| **P2 协议层** | `UnifiedEvent`/`UnifiedMessage`/`Segment`/能力矩阵/三适配器/`session_waiter` | 纯转换单测全绿；不依赖 nonebot 也能跑 |
-| **P3 命令** | `表情管理` 命令组全部子命令 | 三协议下命令可用、管理员校验生效 |
-| **P4 管线** | 自动收集、概率发送、语义检索、结果发送 | 群消息可自动收集并回报 |
-| **P5 WebUI** | Quart→FastAPI 全量路由 + `bridge.js` | 四个页面可打开、增删改查可用 |
-| **P6 AI 工具** | `search_memes`/`send_meme`/`preview` 工具注册表 | 工具可被调用并返回图片 |
-| **P7 测试** | 适配层单测 + `nonebug` 集成测试 + 三协议冒烟 | CI 全绿 |
+| 阶段 | 内容 | 验收 | 状态 |
+| --- | --- | --- | --- |
+| **P0 分支** | `origin`→`upstream`；`main`→`astrbot`（track `upstream/main`）；`astrbot` 基点新建 `main` | `git branch -vv` 显示两条线路 | ✅ 已完成 |
+| **P1 骨架** | `nb2/` 目录、`log.py`、`config_store.py`、`pyproject.toml`、根 `__init__.py` 入口、数据目录 | `nonebot.load_plugin()` 成功、`/meme_manager` 可访问 | ✅ 已完成 |
+| **P2 协议层** | `UnifiedEvent`/`UnifiedMessage`/`Segment`/能力矩阵/三适配器/`session_waiter` | 纯转换单测全绿；不依赖 nonebot 也能跑 | ✅ 已完成 |
+| **P3 命令** | `表情管理` 命令组全部子命令 | 三协议下命令可用、管理员校验生效 | ✅ 已完成 |
+| **P4 管线** | 自动收集、概率发送、语义检索、结果发送 | 群消息可自动收集并回报 | ✅ 已完成（`nb2/pipeline.py` + `nb2/matchers/pipeline.py`） |
+| **P5 WebUI** | Quart→FastAPI 全量路由 + `bridge.js` | 四个页面可打开、增删改查可用 | ✅ 已完成（85 条 API 路由） |
+| **P6 AI 工具** | `search_memes`/`send_meme`/`preview` 工具注册表 | 工具可被调用并返回图片 | ✅ 已完成（`nb2/tools.py`、`nb2/matchers/tools_cmds.py`） |
+| **P7 测试** | 适配层单测 + `nonebug` 集成测试 + 三协议冒烟 | CI 全绿 | 🔄 进行中（单测 + 加载冒烟已通过；nonebug 真实事件驱动待补） |
+
+### 已落地文件（`main` 分支）
+
+```
+nb2/platform/{message,event,capabilities,bridge,session}.py
+nb2/platform/adapters/{base,onebot11,onebot12,qq_official}.py
+nb2/{runtime,config_store,llm,tools,pipeline,media,guards,state,paths,paths_bind,compat,astrbot_types,log}.py
+nb2/matchers/{commands,pipeline,tools_cmds}.py
+nb2/web/{__init__,bridge,compat}.py + nb2/web/static/bridge.js
+tests/nb2/  (13 个测试文件，144 项用例)
+tools/smoke_load.py
+```
+
+### 本轮完成的关键适配
+
+- **业务层零改写**：通过 meta path finder 注入 `astrbot` 兼容模块，
+  `backend/` 与 `image_host/` 的 16 处 AstrBot 依赖全部自动满足；`isinstance(seg, Image)`
+  通过元类虚拟判定映射到 `Segment.type == "image"`。
+- **WebUI 零重写**：Quart 的 `request`/`jsonify`/`send_file` 用 contextvars + Starlette
+  等价实现接管，上游 87 个处理器原样注册为 FastAPI 路由。
+- **协议适配经源码校准**：v11 的 `at(user_id)`/`reply(id_)`、v12 的
+  `mention`/`file_id` 上传、QQ 官方的 `file_image` 两段式与被动回复 `msg_id`
+  均按 `nonebot2 2.5.0 / adapter-onebot 2.4.6 / adapter-qq 1.7.4` 实际签名实现。
 
 ## 7. 上游同步流程
 
