@@ -455,10 +455,39 @@ class MemeRuntime:
     def _build_meme_prompt(self, category_mapping_string: str | None = None) -> str:
         mapping_string = category_mapping_string or self.category_mapping_string
         prompt = self.prompt_head + mapping_string + self.prompt_tail
+        # 分类词库：把「心情 / 语气 / 语境 / 用途」词补到分类说明后面，
+        # 让模型能对上更口语化的对话内容（开关：generation.prompt.lexicon_enabled）。
+        prompt += self._build_lexicon_prompt()
         for enabled, template in getattr(self, "prompt_examples", []):
             if enabled and template.strip():
                 prompt += "\n\n" + template.strip()
         return prompt + self._build_meme_quantity_prompt()
+
+    def _build_lexicon_prompt(self) -> str:
+        """把各分类的词库渲染成提示词片段（缺省开启，读不到词库时为空）。"""
+        from .lexicon import load_for_packs, render_hint_lines
+
+        if not self._read_bool(("generation", "prompt", "lexicon_enabled"), True):
+            return ""
+        try:
+            pack_context = self._resolve_runtime_pack_context()
+            pack_ids = list(pack_context.get("pack_ids") or [])
+            mapping = pack_context.get("category_mapping") or {}
+            if not isinstance(mapping, dict) or not mapping:
+                return ""
+            # 没有包专属词库时仍可用内置基础词表（render_hint_lines 会合并）。
+            lexicon = load_for_packs(pack_ids, self.data_dir)
+            rendered = render_hint_lines(mapping, lexicon)
+        except Exception as exc:  # pragma: no cover - 词库异常不影响主流程
+            logger.debug("生成分类词库提示词失败：{}", exc)
+            return ""
+        if not rendered:
+            return ""
+        return (
+            "\n\n[分类词库]\n"
+            "以下是各分类常见的心情/语气/语境/用途词，用于判断当前对话更适合哪个分类；"
+            "仅作参考，不要逐字复述。\n" + rendered
+        )
 
     def _build_meme_quantity_prompt(self) -> str:
         if not self._read_bool(("generation", "prompt", "quantity_guidance_enabled")):
