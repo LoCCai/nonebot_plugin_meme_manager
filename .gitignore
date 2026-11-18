@@ -186,3 +186,6 @@ data/
 pytest-of-*/
 .tmp/
 
+
+exp_*/
+
