@@ -158,6 +158,27 @@ class UnifiedEvent:
     def is_private_message(self) -> bool:
         return self.get_message_type() is MessageType.PRIVATE_MESSAGE
 
+    # AstrBot 兼容的会话查询接口（业务层 backend/* 依赖）。
+    def is_private_chat(self) -> bool:
+        """是否私聊（含 QQ 官方 C2C 单聊）。"""
+        return str(self.session_type).lower() in {"private", "c2c", "friend"}
+
+    def get_session_id(self) -> str:
+        """会话 ID（群号 / 用户 ID / 频道复合 ID）。"""
+        return str(self.session_id)
+
+    def get_group_id(self) -> str:
+        """群号；非群聊返回空字符串。"""
+        if self.get_message_type() is MessageType.GROUP_MESSAGE:
+            return str(self.session_id)
+        return str(self.get_extra("nb2_group_id") or "")
+
+    def get_channel_id(self) -> str:
+        """频道 ID；频道会话返回复合 ID 的后半段。"""
+        if ":" in str(self.session_id):
+            return str(self.session_id).rsplit(":", 1)[-1]
+        return str(self.session_id)
+
     @property
     def message(self) -> UnifiedMessage:
         """入站消息的统一视图。"""

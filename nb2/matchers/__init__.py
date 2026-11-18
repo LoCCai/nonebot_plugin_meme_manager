@@ -8,19 +8,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import commands, pipeline
+from . import commands, pipeline, tools_cmds
 
 
 def register_all() -> dict[str, Any]:
-    """注册命令与管线 matcher。
+    """注册命令、AI 工具命令与管线 matcher。
 
     Returns:
         ``{"commands": {子命令: matcher}, "pipeline": [matcher]}``。
     """
+    command_map = dict(commands.register_all())
+    command_map.update(tools_cmds.register_all())
     return {
-        "commands": commands.register_all(),
+        "commands": command_map,
         "pipeline": pipeline.register(),
     }
 
 
-__all__ = ["commands", "pipeline", "register_all"]
+__all__ = ["commands", "pipeline", "tools_cmds", "register_all"]
