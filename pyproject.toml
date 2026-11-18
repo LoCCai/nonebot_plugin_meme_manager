@@ -1,0 +1,53 @@
+﻿[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nonebot_plugin_meme_manager"
+version = "5.4.1.nb2.1"
+description = "表情包管理器（NoneBot2 线路）：表情包仓库、资源广场、语义检索、自动收集与图床同步"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "anka" }]
+dependencies = [
+  "nonebot2>=2.3.0",
+  "nonebot-adapter-onebot>=2.4.3",
+  "aiohttp>=3.9",
+  "aiofiles>=23.2",
+  "pillow>=10.0",
+  "numpy>=1.26",
+  "requests>=2.31",
+  "urllib3>=2.0",
+  "certifi>=2023.7",
+]
+
+[project.optional-dependencies]
+# 语义检索（向量索引）；未安装时插件其余能力可用。
+semantic = ["faiss-cpu>=1.8; platform_system != 'Windows' or python_version >= '3.12'"]
+# WebUI（NoneBot2 的 FastAPI driver 自带，显式声明便于理解依赖）。
+webui = ["fastapi>=0.110"]
+qq = ["nonebot-adapter-qq>=1.7"]
+# 图床：Cloudflare R2 使用 S3 兼容客户端。
+image-host = ["minio>=7.2"]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "nonebug>=0.4",
+  "httpx2>=0.27",
+]
+
+[project.urls]
+Homepage = "https://github.com/LoCCai/nonebot_plugin_meme_manager"
+Upstream = "https://github.com/LoCCai/nonebot_plugin_meme_manager/tree/astrbot"
+
+[tool.hatch.build.targets.wheel]
+# 仓库根目录即插件包：只打包 NoneBot2 线路需要的代码与静态资源。
+include = [
+  "**/*.py",
+  "**/*.json",
+  "**/*.yaml",
+  "pages/**",
+  "image_host/**/*.json",
+  "nb2/web/static/**",
+]

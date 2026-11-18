@@ -34,3 +34,34 @@ def plugin_package():
     import importlib
 
     return importlib.import_module(PLUGIN_NAME)
+
+
+def rebind_business_paths(data_dir) -> None:
+    """把已导入业务模块中的路径常量重定向到 ``data_dir``。
+
+    上游业务模块以 ``from ...config import PACKS_DIR`` 的形式在**导入时**取常量值，
+    因此多个运行时（每个测试一个数据目录）之间需要重新绑定，否则后一个运行时
+    仍会读写前一个测试的目录。
+    """
+    import sys
+
+    from repo.nb2.paths_bind import bind_module_paths
+
+    bind_module_paths(data_dir)
+    import repo.config as config_module
+
+    for module in list(sys.modules.values()):
+        if module is None or module is config_module:
+            continue
+        for name in (
+            "PLUGIN_DATA_DIR",
+            "PACKS_DIR",
+            "REGISTRY_PATH",
+            "SELECTION_RULES_PATH",
+            "COMMUNITY_CACHE_PATH",
+            "BACKUP_DIR",
+            "TEMP_DIR",
+            "SEMANTIC_INDEXES_DIR",
+        ):
+            if name in getattr(module, "__dict__", {}):
+                setattr(module, name, getattr(config_module, name))

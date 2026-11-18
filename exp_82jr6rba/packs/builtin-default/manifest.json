@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "builtin-default",
+  "name": "Builtin Default Meme Pack",
+  "version": "1.0.0",
+  "description": "Builtin default meme pack generated during runtime bootstrap",
+  "tags": [
+    "runtime"
+  ],
+  "categories": {}
+}
