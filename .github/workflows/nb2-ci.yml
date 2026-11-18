@@ -1,0 +1,73 @@
+name: nb2-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "nonebot2[fastapi]" nonebot-adapter-onebot nonebot-adapter-qq \
+            pytest pytest-asyncio aiohttp pillow numpy requests urllib3 certifi tqdm werkzeug
+
+      - name: 运行测试
+        run: python -m pytest tests/nb2 -q
+
+      - name: 插件加载冒烟
+        run: python tools/smoke_load.py
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 语法检查
+        run: |
+          python -m compileall -q nb2 backend image_host config.py utils.py
+      - name: 未使用的相对导入深度检查
+        run: |
+          python - <<'PY'
+          import pathlib, re, sys
+          root = pathlib.Path(".")
+          bad = []
+          for path in root.rglob("*.py"):
+              if ".git" in path.parts or "tests" in path.parts:
+                  continue
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              for match in re.finditer(r"^from (\.+)(\w[\w.]*)", text, re.M):
+                  depth, module = len(match.group(1)), match.group(2)
+                  parent = path.parent
+                  ok = True
+                  for _ in range(depth - 1):
+                      if parent.name == "" or parent == root:
+                          ok = False
+                          break
+                      parent = parent.parent
+                  if not ok or not (parent / module.split(".")[0]).exists():
+                      bad.append(f"{path}: from {'.' * depth}{module}")
+          if bad:
+              print("\n".join(bad))
+              sys.exit(1)
+          print("相对导入检查通过")
+          PY
