@@ -1,4 +1,4 @@
-﻿"""多轮交互等待器（AstrBot ``session_waiter`` 的 NoneBot2 实现）。
+"""多轮交互等待器（AstrBot ``session_waiter`` 的 NoneBot2 实现）。
 
 原插件用 ``@session_waiter(timeout=..., record_history_chains=False)`` 装饰
 协程，然后以 ``await waiter(event, filter)`` 的形式等待下一条消息。NoneBot2
@@ -129,6 +129,7 @@ async def _run_waiter(
                 asyncio.shield(state.future), timeout=float(timeout)
             )
         except asyncio.TimeoutError as exc:
+            _WAITERS.pop(key, None)
             raise WAIT_TIMEOUT() from exc
         except asyncio.CancelledError:
             _WAITERS.pop(key, None)

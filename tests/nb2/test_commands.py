@@ -267,6 +267,9 @@ async def test_delete_category_unknown_category(runtime):
 
 @pytest.mark.asyncio
 async def test_delete_category_cancelled(runtime, monkeypatch):
+    memes_dir = runtime.packs_dir / "builtin-default" / "memes" / "happy"
+    memes_dir.mkdir(parents=True, exist_ok=True)
+
     async def cancel(event, timeout=30):
         return False
 
@@ -275,11 +278,16 @@ async def test_delete_category_cancelled(runtime, monkeypatch):
     results = [r async for r in cmd.delete_category_command(event, runtime, "happy")]
     joined = "\n".join(r.plain_text for r in results)
     assert "即将删除类型" in joined
-    assert "happy" in runtime.category_manager.get_descriptions()
+    assert memes_dir.is_dir()
 
 
 @pytest.mark.asyncio
 async def test_delete_category_confirmed(runtime, monkeypatch):
+    memes_dir = runtime.packs_dir / "builtin-default" / "memes" / "happy"
+    memes_dir.mkdir(parents=True, exist_ok=True)
+    (memes_dir / "a.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    runtime.category_manager.update_description("happy", "开心")
+
     async def confirm(event, timeout=30):
         return True
 
@@ -288,7 +296,7 @@ async def test_delete_category_confirmed(runtime, monkeypatch):
     results = [r async for r in cmd.delete_category_command(event, runtime, "happy")]
     joined = "\n".join(r.plain_text for r in results)
     assert "已删除类型" in joined
-    assert "happy" not in runtime.category_manager.get_descriptions()
+    assert not memes_dir.is_dir()
 
 
 # ------------------------------------------------------------ 恢复默认包
@@ -296,7 +304,7 @@ async def test_delete_category_confirmed(runtime, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_restore_default_rejects_category_arg(runtime, monkeypatch):
-    async def fake_install(index_url, overwrite=False, set_as_default=True, **kwargs):
+    def fake_install(index_url, overwrite=False, set_as_default=True, **kwargs):
         return {"selected_pack_name": "官方包", "pack_id": "official"}
 
     import repo.backend.packs.storage as storage
