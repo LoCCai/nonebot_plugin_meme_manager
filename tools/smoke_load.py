@@ -15,6 +15,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent))
+sys.path.insert(0, str(ROOT / "tools"))
+import _pkg_alias  # noqa: E402  （把本仓库插件包统一别名为 repo）
+
+_pkg_alias.install()
 
 os.environ.setdefault("MEME_MANAGER_DATA_DIR", tempfile.mkdtemp(prefix="meme_smoke_"))
 os.environ.setdefault("ENVIRONMENT", "prod")
@@ -34,14 +38,15 @@ def check(label: str, condition: bool, detail: str = "") -> None:
 
 
 # 1. 导入插件（触发 __plugin_meta__ 与兼容层安装）
+# 注意：插件包名 = 仓库目录名，不能硬编码为 "repo"（CI 检出目录名不同）。
 try:
-    plugin = nonebot.load_plugin("repo")
-    check("load_plugin(repo)", plugin is not None, str(plugin))
+    plugin = nonebot.load_plugin(_pkg_alias.PLUGIN_NAME)
+    check(f"load_plugin({_pkg_alias.PLUGIN_NAME})", plugin is not None, str(plugin))
 except Exception as exc:  # pragma: no cover - 冒烟脚本
-    check("load_plugin(repo)", False, f"{type(exc).__name__}: {exc}")
+    check(f"load_plugin({_pkg_alias.PLUGIN_NAME})", False, f"{type(exc).__name__}: {exc}")
     raise SystemExit(1)
 
-import repo  # noqa: E402
+import repo  # noqa: E402  （别名，等价于真实插件包）
 
 check("__plugin_meta__", hasattr(repo, "__plugin_meta__"))
 check("supported_adapters", "~onebot.v11" in (repo.__plugin_meta__.supported_adapters or set()))

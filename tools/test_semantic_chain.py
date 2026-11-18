@@ -21,6 +21,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent))
+sys.path.insert(0, str(ROOT / "tools"))
+import _pkg_alias  # noqa: E402  （把本仓库插件包统一别名为 repo）
+
+_pkg_alias.install()
 
 DATA_DIR = Path(tempfile.mkdtemp(prefix="meme_sem_"))
 os.environ["MEME_MANAGER_DATA_DIR"] = str(DATA_DIR)

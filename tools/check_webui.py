@@ -16,6 +16,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent))
+sys.path.insert(0, str(ROOT / "tools"))
+import _pkg_alias  # noqa: E402  （把本仓库插件包统一别名为 repo）
+
+_pkg_alias.install()
 os.environ.setdefault("MEME_MANAGER_DATA_DIR", tempfile.mkdtemp(prefix="meme_webui_"))
 
 from repo.nb2 import bootstrap  # noqa: E402

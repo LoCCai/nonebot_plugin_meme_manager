@@ -8,12 +8,23 @@ from pathlib import Path
 
 import pytest
 
-#: 仓库根目录（插件包根）。
-ROOT = Path(__file__).resolve().parents[1]
+#: 仓库根目录（插件包根）。conftest 位于 <root>/tests/nb2/，需上溯三层。
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT.parent) not in sys.path:
     sys.path.insert(0, str(ROOT.parent))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+if str(ROOT / "tools") not in sys.path:
+    sys.path.insert(0, str(ROOT / "tools"))
 
-PLUGIN_NAME = "repo"
+import _pkg_alias  # noqa: E402  （测试辅助：把插件包统一别名为 repo）
+
+#: 插件包真实导入名（= 仓库目录名）。本地为 repo，CI 为 nonebot_plugin_meme_manager。
+PLUGIN_NAME = _pkg_alias.install()
+
+#: 测试统一使用 ``repo.nb2...`` 导入别名（首次访问时才真正导入插件包，
+#: 避免影响 NoneBot 的插件加载语义）。
+import repo  # noqa: E402,F401  （触发别名转发）
 
 #: 测试期间把插件数据目录固定到仓库内，避免污染用户环境。
 os.environ.setdefault("MEME_MANAGER_DATA_DIR", str(ROOT / ".pytest_data"))
@@ -43,12 +54,12 @@ def rebind_business_paths(data_dir) -> None:
     因此多个运行时（每个测试一个数据目录）之间需要重新绑定，否则后一个运行时
     仍会读写前一个测试的目录。
     """
-    import sys
-
     from repo.nb2.paths_bind import bind_module_paths
 
     bind_module_paths(data_dir)
-    import repo.config as config_module
+    import importlib
+
+    config_module = importlib.import_module(f"{PLUGIN_NAME}.config")
 
     for module in list(sys.modules.values()):
         if module is None or module is config_module:
