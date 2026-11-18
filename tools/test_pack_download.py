@@ -15,7 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent))
 sys.path.insert(0, str(ROOT / "tools"))
 import _pkg_alias  # noqa: E402  （把本仓库插件包统一别名为 repo）
+from _console import ensure_utf8_stdout  # noqa: E402
 
+ensure_utf8_stdout()
 _pkg_alias.install()
 
 DATA_DIR = Path(tempfile.mkdtemp(prefix="meme_pack_dl_"))

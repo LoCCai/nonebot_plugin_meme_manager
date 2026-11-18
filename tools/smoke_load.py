@@ -1,4 +1,4 @@
-"""插件加载冒烟测试：真实 nonebot 驱动 + FastAPI + WebUI。
+﻿"""插件加载冒烟测试：真实 nonebot 驱动 + FastAPI + WebUI。
 
 运行：
     python tools/smoke_load.py
@@ -17,7 +17,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent))
 sys.path.insert(0, str(ROOT / "tools"))
 import _pkg_alias  # noqa: E402  （把本仓库插件包统一别名为 repo）
+from _console import ensure_utf8_stdout, safe_print  # noqa: E402
 
+ensure_utf8_stdout()
 _pkg_alias.install()
 
 os.environ.setdefault("MEME_MANAGER_DATA_DIR", tempfile.mkdtemp(prefix="meme_smoke_"))
@@ -30,9 +32,21 @@ nonebot.init(driver="~fastapi", superusers={"1001"})
 failures: list[str] = []
 
 
+def _safe_detail(value: object) -> str:
+    """把检查详情修剪成单行短文本。
+
+    不要直接 ``str(plugin)``：``Plugin`` 的字符串里包含插件元数据（中文描述、
+    使用说明），在 Windows 控制台（cp1252）下会触发 ``UnicodeEncodeError``。
+    """
+    text = str(value)
+    text = " ".join(text.split())
+    return text[:300]
+
+
 def check(label: str, condition: bool, detail: str = "") -> None:
     status = "OK  " if condition else "FAIL"
-    print(f"[{status}] {label}{(' — ' + detail) if detail else ''}")
+    line = f"[{status}] {label}{(' — ' + detail) if detail else ''}"
+    safe_print(line)
     if not condition:
         failures.append(label)
 
@@ -41,7 +55,7 @@ def check(label: str, condition: bool, detail: str = "") -> None:
 # 注意：插件包名 = 仓库目录名，不能硬编码为 "repo"（CI 检出目录名不同）。
 try:
     plugin = nonebot.load_plugin(_pkg_alias.PLUGIN_NAME)
-    check(f"load_plugin({_pkg_alias.PLUGIN_NAME})", plugin is not None, str(plugin))
+    check(f"load_plugin({_pkg_alias.PLUGIN_NAME})", plugin is not None, _safe_detail(plugin))
 except Exception as exc:  # pragma: no cover - 冒烟脚本
     check(f"load_plugin({_pkg_alias.PLUGIN_NAME})", False, f"{type(exc).__name__}: {exc}")
     raise SystemExit(1)

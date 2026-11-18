@@ -1,4 +1,4 @@
-name: nb2-ci
+﻿name: nb2-ci
 
 on:
   push:
@@ -55,6 +55,9 @@ jobs:
 
       - name: WebUI 端到端自检
         run: python tools/check_webui.py
+
+      - name: 控制台编码自检
+        run: python tools/check_console.py
 
   lint:
     runs-on: ubuntu-latest

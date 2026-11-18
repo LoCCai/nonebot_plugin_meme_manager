@@ -18,7 +18,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent))
 sys.path.insert(0, str(ROOT / "tools"))
 import _pkg_alias  # noqa: E402  （把本仓库插件包统一别名为 repo）
+from _console import ensure_utf8_stdout, safe_print  # noqa: E402
 
+ensure_utf8_stdout()
 _pkg_alias.install()
 os.environ.setdefault("MEME_MANAGER_DATA_DIR", tempfile.mkdtemp(prefix="meme_webui_"))
 
@@ -37,7 +39,7 @@ failures: list[str] = []
 
 
 def check(label: str, condition: bool, detail: str = "") -> None:
-    print(f"[{'OK  ' if condition else 'FAIL'}] {label}{(' — ' + detail) if detail else ''}")
+    safe_print(f"[{'OK  ' if condition else 'FAIL'}] {label}{(' — ' + detail) if detail else ''}")
     if not condition:
         failures.append(label)
 
@@ -51,7 +53,7 @@ def main() -> int:
     app.include_router(router)
     client = TestClient(app)
 
-    print(f"[1] 已注册 {count} 条 API 路由，前缀 {ROUTER_PREFIX}")
+    safe_print(f"[1] 已注册 {count} 条 API 路由，前缀 {ROUTER_PREFIX}")
     check("API 路由数量", count > 60, f"{count} 条")
 
     # ---- 页面可达性（四个页面 + 入口 + 桥）
@@ -196,11 +198,11 @@ def main() -> int:
         )
         check("POST packs/uninstall 非 5xx", response.status_code < 500, str(response.status_code))
 
-    print()
+    safe_print()
     if failures:
-        print(f"失败 {len(failures)} 项：" + ", ".join(failures))
+        safe_print(f"失败 {len(failures)} 项：" + ", ".join(failures))
         return 1
-    print("WebUI 自检全部通过。")
+    safe_print("WebUI 自检全部通过。")
     return 0
 
 

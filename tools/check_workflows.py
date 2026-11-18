@@ -11,6 +11,14 @@ CI 无法在本地运行，但可以在提交前检查两类**一定会炸**的�
 
 from __future__ import annotations
 
+import os as _os
+import sys as _sys
+
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from _console import ensure_utf8_stdout, safe_print  # noqa: E402
+
+ensure_utf8_stdout()
+
 import pathlib
 import sys
 
@@ -21,12 +29,12 @@ def _load_yaml(path: pathlib.Path):
     try:
         import yaml
     except ImportError:  # pragma: no cover - 本地无 pyyaml 时跳过
-        print("未安装 PyYAML，跳过 YAML 解析检查")
+        safe_print("未安装 PyYAML，跳过 YAML 解析检查")
         return None
     try:
         return yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        print(f"[FAIL] {path} YAML 解析失败：{exc}")
+        safe_print(f"[FAIL] {path} YAML 解析失败：{exc}")
         return None
 
 
@@ -56,20 +64,20 @@ def check_file(path: pathlib.Path) -> list[str]:
 
 def main() -> int:
     if not WORKFLOW_DIR.is_dir():
-        print("未找到 .github/workflows")
+        safe_print("未找到 .github/workflows")
         return 1
     problems: list[str] = []
     files = sorted(WORKFLOW_DIR.glob("*.y*ml"))
     for path in files:
         problems.extend(check_file(path))
-        print(f"检查 {path}")
+        safe_print(f"检查 {path}")
     if problems:
-        print()
-        print(f"发现 {len(problems)} 处问题：")
+        safe_print()
+        safe_print(f"发现 {len(problems)} 处问题：")
         for problem in problems:
-            print("  " + problem)
+            safe_print("  " + problem)
         return 1
-    print(f"工作流检查通过（{len(files)} 个文件）")
+    safe_print(f"工作流检查通过（{len(files)} 个文件）")
     return 0
 
 

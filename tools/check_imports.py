@@ -8,6 +8,14 @@
 
 from __future__ import annotations
 
+import os as _os
+import sys as _sys
+
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from _console import ensure_utf8_stdout, safe_print  # noqa: E402
+
+ensure_utf8_stdout()
+
 import pathlib
 import re
 import sys
@@ -84,11 +92,11 @@ def check() -> list[str]:
 def main() -> int:
     problems = check()
     if problems:
-        print(f"发现 {len(problems)} 处相对导入问题：")
+        safe_print(f"发现 {len(problems)} 处相对导入问题：")
         for problem in problems:
-            print("  " + problem)
+            safe_print("  " + problem)
         return 1
-    print(f"相对导入检查通过（{PACKAGE}）")
+    safe_print(f"相对导入检查通过（{PACKAGE}）")
     return 0
 
 
