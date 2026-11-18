@@ -1561,6 +1561,8 @@ def _download_github_archive(
 def fetch_and_cache_community_index(
     index_url: str,
     github_accelerator_url: str = "",
+    *,
+    include_versions: bool = True,
 ) -> dict:
     index_url = str(index_url or "").strip()
     if not index_url:
@@ -1571,17 +1573,32 @@ def fetch_and_cache_community_index(
         timeout=20,
         github_accelerator_url=github_accelerator_url,
     )
-    if response.status_code != 200:
-        raise ValueError(f"下载社区索引失败，状态码: {response.status_code}")
-
     try:
-        index_data = response.json()
-    except Exception as exc:
-        raise ValueError(f"社区索引不是有效 JSON: {exc}") from exc
+        if response.status_code != 200:
+            raise ValueError(f"下载社区索引失败，状态码: {response.status_code}")
+        try:
+            index_data = response.json()
+        except Exception as exc:
+            raise ValueError(f"社区索引不是有效 JSON: {exc}") from exc
+    finally:
+        response.close()
 
     index_data = validate_community_index(index_data)
+    # Browsing a cold catalog must not wait for one HTTP request per pack.
+    # Keep known versions only when the exact source still matches; an explicit
+    # refresh resolves current remote versions through the existing path.
+    previous = _load_json(COMMUNITY_CACHE_PATH, {})
+    previous_packs = previous.get("index", {}).get("packs", []) if isinstance(previous, dict) and isinstance(previous.get("index"), dict) else []
+    known = {item.get("id"): item for item in previous_packs if isinstance(item, dict)}
     for entry in index_data["packs"]:
         if str(entry.get("version") or "").strip():
+            continue
+        if not include_versions:
+            old = known.get(entry["id"], {})
+            if old.get("source") == entry.get("source") and old.get("version"):
+                entry["version"] = old["version"]
+            else:
+                entry["version_pending"] = True
             continue
         source = entry["source"]
         manifest_url = (

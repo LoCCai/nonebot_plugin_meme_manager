@@ -3687,17 +3687,22 @@ class WebAPIMixin:
         return response
 
     async def _api_fetch_community_index(self):
-        """在事件循环外获取目录及远端版本。
+        """在事件循环外获取目录；首次浏览可跳过逐包版本查询。
 
         Returns:
             已缓存的目录响应及 HTTP 状态码。
         """
         try:
+            data = await request.get_json()
+            include_versions = data.get("include_versions", True) if isinstance(data, dict) else True
+            if type(include_versions) is not bool:
+                return jsonify({"message": "include_versions 必须为布尔值"}), 400
             index_url = COMMUNITY_INDEX_URL
             cache_data = await asyncio.to_thread(
                 fetch_and_cache_community_index,
                 index_url,
                 github_accelerator_url=self._get_github_accelerator_url(),
+                include_versions=include_versions,
             )
             packs = cache_data.get("index", {}).get("packs", [])
             return (
@@ -3733,8 +3738,9 @@ class WebAPIMixin:
                 ),
                 200,
             )
-        except FileNotFoundError as e:
-            return jsonify({"message": str(e)}), 404
+        except FileNotFoundError:
+            return jsonify({"cached": False, "index": None, "pack_count": 0,
+                            "message": "首次打开资源广场，正在获取资源列表"}), 200
         except ValueError as e:
             return jsonify({"message": str(e)}), 400
         except Exception as e:

@@ -758,7 +758,7 @@ async function initCatalogPage() {
     }
   }
 
-  async function fetchIndex() {
+  async function fetchIndex({ includeVersions = true } = {}) {
     if (indexLoading) return;
     indexLoading = true;
     setLoading(refreshCatalogBtn, "刷新中…");
@@ -777,6 +777,7 @@ async function initCatalogPage() {
     try {
       const response = await apiPost("community/index/fetch", {
         index_url: FIXED_INDEX_URL,
+        include_versions: includeVersions,
       });
       if (!Array.isArray(response?.index?.packs)) {
         throw new Error("资源列表格式不正确，请稍后重试");
@@ -832,7 +833,7 @@ async function initCatalogPage() {
       renderCatalog();
       catalogStatus.textContent = `已读取 ${
         readPacksFromCache().length
-      } 个缓存资源包，正在检查更新…`;
+      } 个缓存资源包；点击「刷新资源」检查最新版本。`;
       addLog(`已读取缓存索引，共 ${response.pack_count || 0} 个条目`);
       return true;
     } catch (error) {
@@ -1030,10 +1031,11 @@ async function initCatalogPage() {
   });
 
   addLog("资源广场已就绪");
-  await restoreActiveInstall();
-  await loadCachedIndex({ silentOnMissing: true });
-  await fetchIndex();
-  await updates.resume();
+  // Restoring a background download must not hold the whole catalog hostage.
+  void restoreActiveInstall();
+  const hasCache = await loadCachedIndex({ silentOnMissing: true });
+  if (!hasCache) await fetchIndex({ includeVersions: false });
+  void updates.resume();
 }
 
 void initCatalogPage().catch((error) => {

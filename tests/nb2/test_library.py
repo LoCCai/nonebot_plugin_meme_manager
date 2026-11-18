@@ -31,6 +31,21 @@ def test_lexicon_can_be_disabled(pack):
     assert library.category_catalog()['hints'] == ''
 
 
+def test_selected_packs_combine_images_and_removal_takes_effect_immediately(pack, tmp_path, monkeypatch):
+    _, context, first = pack
+    second = tmp_path / 'second' / 'memes' / 'happy'
+    second.mkdir(parents=True)
+    (second / 'b.png').write_bytes(b'other-image')
+    context['pack_ids'].append('second')
+    context['pack_dirs']['second'] = second.parent.parent
+    candidates = []
+    monkeypatch.setattr(library.random, 'choice', lambda paths: candidates.extend(paths) or paths[-1])
+    assert library.pick_category_image('happy') == second / 'b.png'
+    assert set(candidates) == {first / 'a.png', second / 'b.png'}
+    del context['pack_dirs']['second']
+    assert library.pick_category_image('happy') == first / 'a.png'
+
+
 def test_actual_session_is_resolved_and_rechecked(pack, monkeypatch):
     bot, event, unified = object(), object(), object()
     monkeypatch.setattr(library, 'to_unified_event', lambda b, e: unified if (b, e) == (bot, event) else None)

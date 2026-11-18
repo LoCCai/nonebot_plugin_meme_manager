@@ -419,6 +419,11 @@ async function initSemanticPage() {
         "向量模型未就绪，当前使用分类匹配；请到「设置中心 → 模式 → 语义数据准备」检查配置。",
         true,
       );
+    } else if (!data.semantic_enabled) {
+      showNotice(
+        "当前使用分类选图，无需向量模型；资源包可正常安装和使用。需要精确语义搜图时再配置图片描述与向量模型。",
+        false,
+      );
     } else if (!embeddingReady) {
       showNotice(
         data.embedding_configured_provider_id
