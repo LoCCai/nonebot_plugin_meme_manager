@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nonebot_plugin_meme_manager"
-version = "5.4.1.nb2.1"
+version = "5.4.1.post2"
 description = "表情包管理器（NoneBot2 线路）：表情包仓库、资源广场、语义检索、自动收集与图床同步"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,6 +20,7 @@ dependencies = [
   "requests>=2.31",
   "urllib3>=2.0",
   "certifi>=2023.7",
+  "werkzeug>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -51,3 +52,7 @@ include = [
   "image_host/**/*.json",
   "nb2/web/static/**",
 ]
+exclude = ["tests/**", "tools/**", "data/**", ".pytest_data/**"]
+
+[tool.hatch.build.targets.wheel.sources]
+"" = "nonebot_plugin_meme_manager"

@@ -4,8 +4,8 @@
 （见 ``docs/moellmchats-compat.md``）。本模块把 :mod:`nb2.tools` 的表情工具注册为
 它的工具：
 
-* ``meme_search`` —— 只读，按语义检索候选；
-* ``meme_send``   —— mutating，发送候选表情（走它自己的二阶段确认）。
+* ``meme_library_search`` —— 只读，按语义检索候选；
+* ``meme_library_send`` —— mutating，发送候选表情（走它自己的二阶段确认）。
 
 未安装 MoEllmChats 时本模块**不做任何事**，也不会让插件加载失败。
 """
@@ -21,8 +21,8 @@ from ..state import get_runtime_or_none
 from ..tools import build_default_registry
 
 #: 注册的工具名（MoEllmChats 要求 ``[A-Za-z0-9_-]{1,64}``）。
-SEARCH_TOOL_NAME = "meme_search"
-SEND_TOOL_NAME = "meme_send"
+SEARCH_TOOL_NAME = "meme_library_search"
+SEND_TOOL_NAME = "meme_library_send"
 
 _REGISTERED = False
 
@@ -141,7 +141,7 @@ def register() -> bool:
         ToolSpec(
             name=SEARCH_TOOL_NAME,
             description=(
-                "按情绪、态度或动作语义检索表情包候选。返回候选 ID 供 meme_send 使用；"
+                "按情绪、态度或动作语义检索表情包候选。返回候选 ID 供 meme_library_send 使用；"
                 "同一轮内只应搜索一次。"
             ),
             parameters=_search_parameters(),
@@ -154,7 +154,7 @@ def register() -> bool:
         ToolSpec(
             name=SEND_TOOL_NAME,
             description=(
-                "发送 memo_search 候选中选定的表情图片。ids 必须是本轮候选中出现的 ID；"
+                "发送 meme_library_search 候选中选定的表情图片。ids 必须是本轮候选中出现的 ID；"
                 "无法发送时会说明原因。"
             ),
             parameters=_send_parameters(),
@@ -166,10 +166,10 @@ def register() -> bool:
     ]
 
     try:
+        if any(tool_registry.get(spec.name) is not None for spec in specs):
+            logger.warning("表情图库工具名已被占用，保留原工具并跳过注册")
+            return False
         for spec in specs:
-            # 热重载时先撤销旧注册，保证幂等。
-            if tool_registry.get(spec.name) is not None:
-                tool_registry.unregister(spec.name)
             register_tool(spec)
     except Exception as exc:  # pragma: no cover - 对方版本差异
         logger.warning("注册 MoEllmChats 工具失败：{}", exc)

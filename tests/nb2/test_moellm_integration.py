@@ -81,6 +81,24 @@ def test_register_creates_two_tools(fake_moellm):
     assert send.parameters["required"] == ["ids"]
 
 
+def test_existing_template_search_is_preserved(fake_moellm):
+    registry, _ = fake_moellm
+    original = object()
+    registry.registered['meme_search'] = original
+    assert moellm.register() is True
+    moellm.unregister()
+    assert registry.registered == {'meme_search': original}
+
+
+def test_conflicting_library_tool_is_not_replaced(fake_moellm):
+    registry, _ = fake_moellm
+    original = object()
+    registry.registered[moellm.SEARCH_TOOL_NAME] = original
+    assert moellm.register() is False
+    moellm.unregister()
+    assert registry.registered == {moellm.SEARCH_TOOL_NAME: original}
+
+
 def test_register_is_idempotent_and_unregister_cleans(fake_moellm):
     registry, _ = fake_moellm
     assert moellm.register() is True

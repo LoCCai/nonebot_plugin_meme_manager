@@ -45,14 +45,14 @@ __plugin_meta__ = PluginMetadata(
         "/表情管理 收集表情 收集引用图片；\n"
         "/表情管理 开始收集 / 结束收集 连续收集；\n"
         "/表情管理 图库统计 查看统计。\n"
-        "WebUI：启动后访问 /meme_manager/ 。"
+        "WebUI：显式开启 webui.enabled 后访问 /meme_manager/ 。"
     ),
     type="application",
     homepage="https://github.com/LoCCai/nonebot_plugin_meme_manager",
     supported_adapters={"~onebot.v11", "~onebot.v12", "~qq"},
     extra={
         "author": "anka",
-        "version": "5.4.1-nb2.1",
+        "version": "5.4.1.post2",
         "upstream": "https://github.com/LoCCai/nonebot_plugin_meme_manager",
     },
 )
@@ -87,6 +87,8 @@ def register_matchers() -> dict[str, list]:
 
 async def mount_webui(runtime: MemeRuntime) -> None:
     """挂载 WebUI（FastAPI 路由）。"""
+    if not runtime._read_bool(("webui", "enabled"), False):
+        return
     from .nb2.web import mount_webui as _mount
 
     _mount(runtime)
@@ -111,7 +113,8 @@ def _setup_driver_hooks() -> None:
         try:
             from .nb2.integrations import moellm
 
-            moellm.register()
+            if runtime.semantic_enabled and runtime._read_bool(("integration", "semantic_tools_enabled"), False):
+                moellm.register()
         except Exception as exc:  # pragma: no cover - 防御性
             logger.debug("MoEllmChats 集成未启用：{}", exc)
         try:

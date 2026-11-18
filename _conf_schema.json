@@ -9,6 +9,12 @@
     "description": "页面预览",
     "type": "object",
     "items": {
+      "enabled": {
+        "description": "挂载独立管理页面",
+        "type": "bool",
+        "default": false,
+        "hint": "仅在可信管理网络或已配置外部鉴权时开启；当前独立页面不提供登录保护，修改后需重启。"
+      },
       "preview_concurrency": {
         "description": "预览加载并发数",
         "type": "int",
@@ -19,6 +25,23 @@
           "step": 1
         },
         "hint": "每个插件页面同时加载的图片数量。低带宽建议 1–2，保存后刷新页面生效。"
+      }
+    }
+  },
+  "integration": {
+    "description": "聊天插件集成",
+    "type": "object",
+    "items": {
+      "semantic_tools_enabled": {
+        "description": "注册语义搜索工具",
+        "type": "bool",
+        "default": false,
+        "hint": "需要额外的向量服务。分类词库接入不需要开启此项。"
+      },
+      "superusers_only": {
+        "description": "共享图库仅超级管理员可修改",
+        "type": "bool",
+        "default": true
       }
     }
   },

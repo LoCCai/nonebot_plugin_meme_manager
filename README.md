@@ -59,11 +59,14 @@ pip install "nonebot_plugin_meme_manager[qq]"         # QQ 官方机器人
 | `/表情管理 清空指定类型` / `清空全部` | 清空图片 | 管理员 |
 | `/表情管理 同步状态` / `同步到云端` / `从云端同步` | 图床同步 | 管理员 |
 
-管理员判定：NoneBot2 `SUPERUSERS`，或平台角色为管理员/群主。
+管理员默认仅限 NoneBot2 `SUPERUSERS`；`integration.superusers_only=false`
+时才同时允许平台管理员/群主管理共享图库。
 
 ## WebUI
 
-启动后访问 `http://<host>:<port>/meme_manager/`。前端沿用上游页面，
+WebUI 默认关闭；仅在入口已配置访问认证的情况下开启 `webui.enabled`，重启后
+访问 `http://<host>:<port>/meme_manager/`。接口本身不提供用户认证，不要直接暴露公网。
+前端沿用上游页面，
 `nb2/web/static/bridge.js` 提供 `window.AstrBotPluginPage` 的 NoneBot2 实现，
 所有 API 位于 `/meme_manager/api/*`。
 
@@ -77,8 +80,20 @@ data/meme_manager/config.json
 
 - 可在 WebUI「设置中心」编辑；
 - 也可直接改 JSON 后重启；
-- 数据目录解析顺序：`MEME_MANAGER_DATA_DIR` 环境变量 → `nonebot-plugin-localstore`
+- 数据目录解析顺序：`MEME_MANAGER_DATA_DIR` 环境变量或 NoneBot `.env` 配置 → `nonebot-plugin-localstore`
   → 运行目录 `data/meme_manager`。
+
+## MoEllmChats 随文表情
+
+支持新版 MoEllmChats 的 `emotion_source: "meme_manager"`：读取会话已启用资源包的
+分类和词库，由原聊天模型选择分类，本地挑选图片交给聊天插件发送。无需独立分类模型、
+视觉打标或向量索引；`official-001` 自带词库，其他包可使用已有词库或内置基础词表。
+`generation.prompt.lexicon_enabled` 控制词库提示。无图片的分类不进入提示词。
+
+只使用此模式时，保持 `semantic.enabled=false`、`auto_collect.enabled=false`，
+无需配置任何模型提供商。独立语义工具需额外开启 `integration.semantic_tools_enabled`
+及语义检索依赖；工具名使用 `meme_library_search` / `meme_library_send`，
+不会替换聊天插件原有的表情生成工具。
 
 ## 与上游同步
 

@@ -43,6 +43,13 @@ def resolve_data_dir(plugin_name: str = PLUGIN_NAME) -> Path:
     最后一项在 NoneBot2 机器人工程里即「工程根/data/插件名」，可写且稳定。
     """
     env_override = os.environ.get("MEME_MANAGER_DATA_DIR")
+    if not env_override:
+        try:
+            from nonebot import get_driver
+
+            env_override = getattr(get_driver().config, "meme_manager_data_dir", None)
+        except ValueError:
+            pass
     if env_override:
         path = Path(env_override).expanduser().resolve()
     else:

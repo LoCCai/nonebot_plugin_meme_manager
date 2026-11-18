@@ -104,7 +104,12 @@ def register_command(
             await matcher.finish()
         unified.set_extra("nb2_command", True)
         unified.set_extra("nb2_command_filter", CommandGroupFilter(PREFIX))
-        if admin and not unified.is_admin:
+        from nonebot import get_driver
+
+        allowed = unified.is_admin
+        if admin and runtime._read_bool(("integration", "superusers_only"), True):
+            allowed = str(event.get_user_id()) in {str(uid) for uid in get_driver().config.superusers}
+        if admin and not allowed:
             await matcher.finish("⚠️ 该命令仅限管理员使用。")
 
         raw_args = str(args).strip() if args is not None else ""
