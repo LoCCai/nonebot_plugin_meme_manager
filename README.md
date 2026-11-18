@@ -1,8 +1,8 @@
 # 表情包管理器（NoneBot2 线路）
 
-> 这是 `LoCCai/nonebot_plugin_meme_manager` 的 **NoneBot2 适配线路**。
-> 上游 `astrbot` 分支保持与 AstrBot 插件一致，仅用于同步；本分支（`main`）是
-> NoneBot2 插件实现，支持 **OneBot v11 / OneBot v12 / QQ 官方机器人**。
+> 这是 `LoCCai/nonebot_plugin_meme_manager` 的 **NoneBot2 适配线路**（`main` 分支）。
+> 原始 AstrBot 插件仓库为 `anka-afk/astrbot_plugin_meme_manager`，对应 `astrbot` 分支，
+> 仅用于上游同步。本分支支持 **OneBot v11 / OneBot v12 / QQ 官方机器人**。
 
 ## 能力
 
@@ -85,6 +85,7 @@ data/meme_manager/config.json
 ```bash
 git switch astrbot && git fetch upstream && git merge --ff-only upstream/main
 git switch main && git merge astrbot
+git push origin main astrbot
 ```
 
 详见 [MIGRATION_PLAN.md](MIGRATION_PLAN.md)。

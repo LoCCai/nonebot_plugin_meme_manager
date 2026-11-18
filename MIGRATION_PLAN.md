@@ -1,7 +1,8 @@
 # NoneBot2 迁移方案（Meme Manager）
 
 > 本文档是 `main`（NoneBot2 线路）的架构契约与实施路线图。
-> `astrbot` 分支保持与上游 `LoCCai/nonebot_plugin_meme_manager`（实为 AstrBot 插件）一致，仅用于同步。
+> `astrbot` 分支保持与原始 AstrBot 插件仓库 `anka-afk/astrbot_plugin_meme_manager` 一致，仅用于同步；
+> 本线路的 fork 在 `LoCCai/nonebot_plugin_meme_manager`（`origin`，`main` 分支）。
 
 ## 1. 目标
 
@@ -16,7 +17,7 @@
 
 | 项目 | 事实 |
 | --- | --- |
-| 上游 | `LoCCai/nonebot_plugin_meme_manager`，仅 `main` 分支，v5.4.1（`1561b4f`） |
+| 上游 | 原始 AstrBot 仓库 `anka-afk/astrbot_plugin_meme_manager`（`upstream`）；本线路 fork `LoCCai/nonebot_plugin_meme_manager`（`origin`） |
 | 实际身份 | AstrBot 插件：`metadata.yaml` 声明 `astrbot_version >= 4.28.2`，使用 `_conf_schema.json`、`pages/` 插件页 |
 | 规模 | Python 约 1.5 MB；`mixins/web_api.py` 186 KB、`mixins/event_handlers.py` 126 KB、`mixins/commands.py` 43 KB、`main.py` 60 KB |
 | AstrBot 耦合 | 仅 16 个文件 import astrbot |
@@ -134,7 +135,7 @@ UnifiedMessage(segments)    # 提供 plain_text / images() / first_image()
 
 | 阶段 | 内容 | 验收 | 状态 |
 | --- | --- | --- | --- |
-| **P0 分支** | `origin`→`upstream`；`main`→`astrbot`（track `upstream/main`）；`astrbot` 基点新建 `main` | `git branch -vv` 显示两条线路 | ✅ 已完成 |
+| **P0 分支** | `main`→`astrbot`（track `upstream/main`）；`astrbot` 基点新建 `main`（track `origin/main`） | `git branch -vv` 显示两条线路 | ✅ 已完成 |
 | **P1 骨架** | `nb2/` 目录、`log.py`、`config_store.py`、`pyproject.toml`、根 `__init__.py` 入口、数据目录 | `nonebot.load_plugin()` 成功、`/meme_manager` 可访问 | ✅ 已完成 |
 | **P2 协议层** | `UnifiedEvent`/`UnifiedMessage`/`Segment`/能力矩阵/三适配器/`session_waiter` | 纯转换单测全绿；不依赖 nonebot 也能跑 | ✅ 已完成 |
 | **P3 命令** | `表情管理` 命令组全部子命令 | 三协议下命令可用、管理员校验生效 | ✅ 已完成 |
@@ -170,10 +171,13 @@ tools/smoke_load.py
 
 ```bash
 git switch astrbot
-git fetch upstream
+git fetch upstream                 # upstream = anka-afk/astrbot_plugin_meme_manager
 git merge --ff-only upstream/main   # 只快进，不产生本地提交
 git switch main
-git merge astrbot                   # 冲突集中于入口文件
+git merge astrbot
+
+# 推到本线路 fork（origin = LoCCai/nonebot_plugin_meme_manager）
+git push origin main astrbot
 ```
 
 **纪律**：
