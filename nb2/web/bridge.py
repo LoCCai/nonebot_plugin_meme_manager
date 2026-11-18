@@ -1,4 +1,4 @@
-﻿"""把上游 WebUI 处理器移植到 FastAPI 的适配器。
+"""把上游 WebUI 处理器移植到 FastAPI 的适配器。
 
 上游 ``mixins/web_api.py`` 的 87 个处理器全部依赖 Quart 的模块级 ``request`` /
 ``jsonify`` / ``send_file``，并返回 ``(响应, 状态码)`` 元组。与其逐个重写，这里：
@@ -17,11 +17,15 @@ import sys
 import types
 from typing import Any, Callable
 
-from ..log import logger
 from starlette.requests import Request
 from starlette.responses import Response
 
+from ..log import logger
+
 from . import compat
+
+#: WebUI 挂载前缀（与 ``nb2.web`` 保持一致）。
+ROUTER_PREFIX = "/meme_manager"
 
 _INSTALLED = False
 
@@ -143,7 +147,7 @@ def _register_one(router: Any, runtime: Any, route: str, handler: Callable[..., 
     """把单个上游处理器注册为 FastAPI 端点。"""
     from .compat import normalize_result, reset_current_request, set_current_request
 
-    path = _convert_path(f"/api/{route.strip('/')}")
+    path = _convert_path(f"{ROUTER_PREFIX}/api/{route.strip('/')}")
     # 上游处理器没有 ``Request`` 参数，FastAPI 需要知道路径参数的类型；
     # 全部按字符串处理（上游自身做校验与转换）。
     path_params = [

@@ -1,4 +1,4 @@
-"""WebUI 集成测试（FastAPI TestClient，不需要真实驱动）。"""
+﻿"""WebUI 集成测试（FastAPI TestClient，不需要真实驱动）。"""
 
 from __future__ import annotations
 
@@ -58,9 +58,9 @@ def test_api_routes_registered(runtime):
     count = register_routes(router, runtime)
     paths = {route.path for route in router.routes}
     assert count > 0
-    assert "/api/emoji" in paths
-    assert "/api/preview/manifest" in paths
-    assert "/api/bridge/auth_token" in paths
+    assert "/meme_manager/api/emoji" in paths
+    assert "/meme_manager/api/preview/manifest" in paths
+    assert "/meme_manager/api/bridge/auth_token" in paths
 
 
 def test_api_emoji_endpoint_works(runtime):
@@ -73,7 +73,7 @@ def test_api_emoji_endpoint_works(runtime):
     application.include_router(router)
     client = TestClient(application)
 
-    response = client.get("/api/emoji")
+    response = client.get("/meme_manager/api/emoji")
     assert response.status_code == 200
     assert isinstance(response.json(), dict)
 
@@ -88,11 +88,11 @@ def test_api_bridge_token_endpoint(runtime):
     application.include_router(router)
     client = TestClient(application)
 
-    response = client.get("/api/bridge/auth_token")
+    response = client.get("/meme_manager/api/bridge/auth_token")
     assert response.status_code == 401
 
     response = client.get(
-        "/api/bridge/auth_token", headers={"Authorization": "Bearer abc"}
+        "/meme_manager/api/bridge/auth_token", headers={"Authorization": "Bearer abc"}
     )
     assert response.status_code == 200
     assert response.json() == {"token": "abc"}
