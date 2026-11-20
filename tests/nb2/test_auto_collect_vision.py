@@ -69,4 +69,30 @@ async def test_incomplete_decision_is_retryable(collector, content, reason, erro
     with pytest.raises(ValueError, match=error):
         await manager._process_job(job)
     assert not manager._state["decisions"]
+    assert context._post.await_count == (2 if reason == "length" else 1)
+
+@pytest.mark.parametrize("operation", ["classify", "understand"])
+async def test_truncation_increases_budget_once_and_preserves_request(collector, operation):
+    manager, context, image = collector
+    answer = {"is_meme": False, "caption": "blue", "tags": ["square"], "chat_use_evidence": "plain"}
+    context._post = AsyncMock(side_effect=[
+        {"choices": [{"finish_reason": "length", "message": {"content": ""}}]},
+        {"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(answer)}}]},
+    ])
+    if operation == "classify":
+        assert not (await manager._classify(image, ".png", {}))["is_meme"]
+    else:
+        assert (await manager._understand(image, ".png"))["tags"] == ["square"]
+    first, retry = (call.args[1] for call in context._post.await_args_list)
+    assert retry == {**first, "max_tokens": first["max_tokens"] * 2}
+    assert manager._state["recognition_count"] == 1  # reservation for the extra call
+
+
+async def test_truncation_respects_daily_quota(collector):
+    manager, context, image = collector
+    manager.daily_recognition_limit = 1
+    assert manager._daily_call_available()
+    context._post = AsyncMock(return_value={"choices": [{"finish_reason": "length"}]})
+    with pytest.raises(ValueError, match="finish_reason=length"):
+        await manager._classify(image, ".png", {})
     assert context._post.await_count == 1

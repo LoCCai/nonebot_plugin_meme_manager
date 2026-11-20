@@ -1189,31 +1189,37 @@ class AutoCollectManager:
         return self._explicit_decision_rejection(decision)
 
     async def _vision_json_text(self, request_data: dict[str, Any]) -> str:
-        """收集任务只需结构化结论。格式不受支持时沿用原有的单次兼容回退。"""
-        request_data["disable_thinking"] = True
-        try:
+        """只有上游明确报告截断，才在当日配额内以双倍输出上限重试一次。"""
+        request = {**request_data, "disable_thinking": True}
+        retried_length = False
+        while True:
             self.counters["vision_requests"] = self.counters.get("vision_requests", 0) + 1
-            response = await self.plugin.context.llm_generate(**request_data)
-        except Exception as exc:
-            if not _structured_output_is_unsupported(exc):
-                raise
-            request_data.pop("response_format", None)
-            self.counters["vision_requests"] += 1
-            response = await self.plugin.context.llm_generate(**request_data)
+            try:
+                response = await self.plugin.context.llm_generate(**request)
+            except Exception as exc:
+                if "response_format" not in request or not _structured_output_is_unsupported(exc):
+                    raise
+                del request["response_format"]
+                continue
 
-        raw = getattr(response, "raw", None)
-        choices = raw.get("choices") if isinstance(raw, dict) else None
-        choice = choices[0] if isinstance(choices, list) and choices else {}
-        reason = choice.get("finish_reason") if isinstance(choice, dict) else None
-        text = str(getattr(response, "completion_text", "") or "").strip()
-        if reason == "length" or not text:
+            raw = getattr(response, "raw", None)
+            choices = raw.get("choices") if isinstance(raw, dict) else None
+            choice = choices[0] if isinstance(choices, list) and choices else {}
+            reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+            text = str(getattr(response, "completion_text", "") or "").strip()
+            if reason != "length" and text:
+                return text
+            if reason == "length" and not retried_length and self._daily_call_available():
+                retried_length = True
+                request["max_tokens"] *= 2
+                self.counters["vision_length_retries"] = self.counters.get("vision_length_retries", 0) + 1
+                continue
             usage = getattr(response, "usage", None)
             tokens = usage.get("completion_tokens") if isinstance(usage, dict) else None
             raise ValueError(
                 "视觉模型未返回完整 JSON 正文"
                 f"（finish_reason={reason or 'unknown'}, completion_tokens={tokens}）"
             )
-        return text
 
     async def _classify(
         self,
