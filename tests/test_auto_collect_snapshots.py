@@ -23,12 +23,17 @@ class SnapshotLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.stack.enter_context(
                 patch.object(auto_collect, constant, self.root / name)
             )
+        (self.root / "pack-a").mkdir()
+        self.stack.enter_context(patch.object(auto_collect, "PACKS_DIR", self.root))
+        self.stack.enter_context(
+            patch.object(auto_collect, "load_pack_category_mapping", return_value={"happy": "positive"})
+        )
         self.source = self.root / "source.png"
         self.source.write_bytes(b"snapshot-content")
         plugin = SimpleNamespace(
             _resolve_runtime_pack_context=lambda **_: {
                 "pack_id": "pack-a",
-                "category_mapping": {"happy": "positive"},
+                "category_mapping": {"happy": "positive", "waiting": "only in pack-b"},
             }
         )
         self.manager = auto_collect.AutoCollectManager(
@@ -42,6 +47,12 @@ class SnapshotLifecycleTests(unittest.IsolatedAsyncioTestCase):
             get_group_id=lambda: "group",
             message_obj=SimpleNamespace(message=[self.image]),
         )
+
+    async def test_implicit_pack_uses_only_its_writable_categories(self):
+        with patch.object(self.manager, "_snapshot_message_images", new_callable=AsyncMock) as snapshot:
+            self.assertTrue(await self.manager.submit(self.event))
+            await asyncio.gather(*self.manager._snapshot_tasks)
+            self.assertEqual(snapshot.await_args.args[1:3], ("pack-a", {"happy": "positive"}))
 
     async def test_remote_submit_returns_before_download_and_close_cancels(self):
         started = asyncio.Event()

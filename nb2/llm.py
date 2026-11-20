@@ -242,6 +242,11 @@ class LLMContext:
             payload["temperature"] = kwargs["temperature"]
         if kwargs.get("max_tokens") is not None:
             payload["max_tokens"] = kwargs["max_tokens"]
+        if (
+            kwargs.get("disable_thinking")
+            and provider.model.casefold() == "deepseek-v4.1-flash"
+        ):
+            payload["thinking"] = {"type": "disabled"}
         if kwargs.get("response_format") is not None:
             payload["response_format"] = kwargs["response_format"]
 
@@ -389,6 +394,7 @@ class LLMContext:
                     str(part.get("text", ""))
                     for part in content
                     if isinstance(part, dict)
+                    and part.get("type") not in ("reasoning", "reasoning_content", "thinking")
                 )
             else:
                 text = str(content or "")

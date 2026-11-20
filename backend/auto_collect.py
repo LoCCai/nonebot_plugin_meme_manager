@@ -529,21 +529,15 @@ class AutoCollectManager:
             return False
 
         try:
-            if self.target_pack_id:
-                target_pack_id = validate_pack_id(
-                    self.target_pack_id, "自动收集目标表情包"
-                )
-                if not (PACKS_DIR / target_pack_id).is_dir():
-                    logger.warning(
-                        "[meme_manager] 自动收集目标表情包不存在：%s",
-                        target_pack_id,
-                    )
-                    return False
-                categories = load_pack_category_mapping(target_pack_id)
-            else:
+            pack_id = self.target_pack_id
+            if not pack_id:
                 context = self.plugin._resolve_runtime_pack_context(event=event)
-                target_pack_id = str(context.get("pack_id") or "").strip()
-                categories = dict(context.get("category_mapping") or {})
+                pack_id = context.get("pack_id")
+            target_pack_id = validate_pack_id(pack_id, "自动收集目标表情包")
+            if not (PACKS_DIR / target_pack_id).is_dir():
+                logger.warning("[meme_manager] 自动收集目标表情包不存在：%s", target_pack_id)
+                return False
+            categories = await asyncio.to_thread(load_pack_category_mapping, target_pack_id)
         except Exception as exc:
             logger.warning("[meme_manager] 解析自动收集目标失败：%s", exc)
             return False
@@ -1194,6 +1188,33 @@ class AutoCollectManager:
         )
         return self._explicit_decision_rejection(decision)
 
+    async def _vision_json_text(self, request_data: dict[str, Any]) -> str:
+        """收集任务只需结构化结论。格式不受支持时沿用原有的单次兼容回退。"""
+        request_data["disable_thinking"] = True
+        try:
+            self.counters["vision_requests"] = self.counters.get("vision_requests", 0) + 1
+            response = await self.plugin.context.llm_generate(**request_data)
+        except Exception as exc:
+            if not _structured_output_is_unsupported(exc):
+                raise
+            request_data.pop("response_format", None)
+            self.counters["vision_requests"] += 1
+            response = await self.plugin.context.llm_generate(**request_data)
+
+        raw = getattr(response, "raw", None)
+        choices = raw.get("choices") if isinstance(raw, dict) else None
+        choice = choices[0] if isinstance(choices, list) and choices else {}
+        reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+        text = str(getattr(response, "completion_text", "") or "").strip()
+        if reason == "length" or not text:
+            usage = getattr(response, "usage", None)
+            tokens = usage.get("completion_tokens") if isinstance(usage, dict) else None
+            raise ValueError(
+                "视觉模型未返回完整 JSON 正文"
+                f"（finish_reason={reason or 'unknown'}, completion_tokens={tokens}）"
+            )
+        return text
+
     async def _classify(
         self,
         content: bytes,
@@ -1246,18 +1267,7 @@ class AutoCollectManager:
                     "符合要求时继续原有识别、分类和描述。保持原有 JSON 字段及格式。"
                 )
             try:
-                self.counters["vision_requests"] = (
-                    self.counters.get("vision_requests", 0) + 1
-                )
-                response = await self.plugin.context.llm_generate(**request_data)
-            except Exception as exc:
-                if not _structured_output_is_unsupported(exc):
-                    raise
-                request_data.pop("response_format", None)
-                self.counters["vision_requests"] = (
-                    self.counters.get("vision_requests", 0) + 1
-                )
-                response = await self.plugin.context.llm_generate(**request_data)
+                raw_text = await self._vision_json_text(request_data)
             finally:
                 for frame_path in frame_paths:
                     Path(frame_path).unlink(missing_ok=True)
@@ -1265,7 +1275,6 @@ class AutoCollectManager:
             source_file.close()
             Path(source_file.name).unlink(missing_ok=True)
 
-        raw_text = str(getattr(response, "completion_text", "") or "").strip()
         try:
             payload = json.loads(raw_text)
         except (TypeError, ValueError):
@@ -1276,18 +1285,18 @@ class AutoCollectManager:
         if not isinstance(payload, dict):
             raise ValueError("视觉模型结果必须是 JSON 对象")
 
-        raw_is_meme = payload.get("is_meme", False)
-        is_meme = (
-            raw_is_meme
-            if isinstance(raw_is_meme, bool)
-            else str(raw_is_meme).strip().lower() in {"true", "1", "yes"}
-        )
+        flag = str(payload.get("is_meme")).strip().lower()
+        if flag not in {"true", "false", "1", "0", "yes", "no"}:
+            raise ValueError("视觉模型分类结果缺少有效的 is_meme")
+        is_meme = flag in {"true", "1", "yes"}
         confidences = {}
         for key in ("meme_confidence", "category_confidence"):
             try:
-                value = float(payload.get(key, 0) or 0)
-            except (TypeError, ValueError):
-                value = 0.0
+                value = float(payload.get(key))
+            except (TypeError, ValueError, OverflowError):
+                value = math.nan
+            if key == "meme_confidence" and is_meme and not math.isfinite(value):
+                raise ValueError("视觉模型分类结果缺少有效的 meme_confidence")
             confidences[key] = (
                 max(0.0, min(1.0, value)) if math.isfinite(value) else 0.0
             )
@@ -1352,28 +1361,14 @@ class AutoCollectManager:
                 "response_format": {"type": "json_object"},
             }
             try:
-                self.counters["vision_requests"] = (
-                    self.counters.get("vision_requests", 0) + 1
-                )
-                response = await self.plugin.context.llm_generate(**request_data)
-            except Exception as exc:
-                if not _structured_output_is_unsupported(exc):
-                    raise
-                request_data.pop("response_format", None)
-                self.counters["vision_requests"] = (
-                    self.counters.get("vision_requests", 0) + 1
-                )
-                response = await self.plugin.context.llm_generate(**request_data)
+                raw_text = await self._vision_json_text(request_data)
             finally:
                 for frame_path in frame_paths:
                     Path(frame_path).unlink(missing_ok=True)
         finally:
             source_file.close()
             Path(source_file.name).unlink(missing_ok=True)
-        return parse_understanding(
-            str(getattr(response, "completion_text", "") or ""),
-            vision_model=self.vision_provider_id,
-        )
+        return parse_understanding(raw_text, vision_model=self.vision_provider_id)
 
     async def _judge_understanding(
         self, understanding: dict[str, Any], categories: dict[str, str]
@@ -2056,6 +2051,9 @@ class AutoCollectManager:
                     or REVIEW_CATEGORY
                 )
                 if category not in categories and category != REVIEW_CATEGORY:
+                    if not manual_confirmed:
+                        skipped_review_ids.add(record_id)
+                        continue
                     raise ValueError("请选择当前表情包中的分类")
                 validated[record_id] = (source, category)
             result["skipped_review"] = len(skipped_review_ids)

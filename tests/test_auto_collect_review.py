@@ -546,6 +546,17 @@ class AutoCollectReviewTests(unittest.IsolatedAsyncioTestCase):
                     auto_collect.AUTO_COLLECT_INBOX_METADATA_PATH, {"items": {}}
                 )
 
+    async def test_stale_category_remains_pending_for_manual_correction(self):
+        record_id, _ = await self.add_candidate()
+        with patch.object(auto_collect, "load_pack_category_mapping", return_value={"sad": "sad"}):
+            result = await self.manager.accept_pending("pack-a", [{"id": record_id}], manual_confirmed=False)
+            self.assertEqual(result["skipped_review"], 1)
+            self.assertTrue(self.manager.pending_image_path("pack-a", record_id).is_file())
+            with self.assertRaisesRegex(ValueError, "请选择当前表情包中的分类"):
+                await self.manager.accept_pending("pack-a", [{"id": record_id, "category": "happy"}])
+            result = await self.manager.accept_pending("pack-a", [{"id": record_id, "category": "sad"}])
+            self.assertEqual(result["imported"], 1)
+
     async def test_nonfinite_model_confidences_never_become_high_confidence(self):
         self.plugin.context = SimpleNamespace(llm_generate=AsyncMock())
         with patch.object(auto_collect, "AUTO_COLLECT_TEMP_DIR", self.root):
@@ -561,11 +572,8 @@ class AutoCollectReviewTests(unittest.IsolatedAsyncioTestCase):
                             }
                         )
                     )
-                    result = await self.manager._classify(
-                        png_bytes(), ".png", {"happy": "happy"}
-                    )
-                    self.assertEqual(result["meme_confidence"], 0.0)
-                    self.assertEqual(result["category_confidence"], 0.0)
+                    with self.assertRaisesRegex(ValueError, "meme_confidence"):
+                        await self.manager._classify(png_bytes(), ".png", {"happy": "happy"})
 
     async def test_content_review_only_appends_rules_when_enabled(self):
         self.plugin.context = SimpleNamespace(
