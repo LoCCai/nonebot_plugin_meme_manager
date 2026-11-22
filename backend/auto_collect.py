@@ -210,6 +210,44 @@ class AutoCollectManager:
             os.fsync(file_obj.fileno())
         os.replace(temporary, path)
 
+    async def _read_inbox(self, *, initialize: bool = False) -> dict[str, Any]:
+        default = {"items": {}}
+        if initialize:
+            default["schema_version"] = AUTO_COLLECT_SCHEMA_VERSION
+        return await asyncio.to_thread(
+            self._load_json, AUTO_COLLECT_INBOX_METADATA_PATH, default,
+        )
+
+    async def _commit_inbox(
+        self, metadata: dict[str, Any], *, new_image: tuple[Path, bytes] | None = None,
+        removed: tuple[Path, ...] = (),
+    ) -> None:
+        """Commit under the caller's inbox lock without blocking the bot loop."""
+        def commit() -> None:
+            if new_image is not None:
+                target, content = new_image
+                target.parent.mkdir(parents=True, exist_ok=True)
+                temporary = target.with_name(f".{target.name}.tmp")
+                temporary.write_bytes(content)
+                os.replace(temporary, target)
+            self._save_json(AUTO_COLLECT_INBOX_METADATA_PATH, metadata)
+            for path in removed:
+                path.unlink(missing_ok=True)
+
+        # Cancellation cannot interrupt a thread in fsync. Hold the caller's
+        # lock until the writer finishes, even during shutdown or a second cancel.
+        writer = asyncio.create_task(asyncio.to_thread(commit))
+        try:
+            await asyncio.shield(writer)
+        except asyncio.CancelledError:
+            while not writer.done():
+                try:
+                    await asyncio.shield(writer)
+                except asyncio.CancelledError:
+                    continue
+            writer.result()
+            raise
+
     def _decision_service_status(self) -> dict[str, Any]:
         """返回当前使用方的本地决策服务就绪状态，并隐藏敏感信息。
 
@@ -806,7 +844,7 @@ class AutoCollectManager:
             pack_duplicate = await asyncio.to_thread(
                 self._pack_contains_digest, target_pack_id, digest
             )
-            metadata = self._load_json(AUTO_COLLECT_INBOX_METADATA_PATH, {"items": {}})
+            metadata = await self._read_inbox()
             if (
                 pack_duplicate
                 or record_id in self._inflight
@@ -1587,10 +1625,7 @@ class AutoCollectManager:
             已保存、重复或容量受限的处理结果。
         """
         async with self._inbox_lock:
-            metadata = self._load_json(
-                AUTO_COLLECT_INBOX_METADATA_PATH,
-                {"schema_version": AUTO_COLLECT_SCHEMA_VERSION, "items": {}},
-            )
+            metadata = await self._read_inbox(initialize=True)
             items = metadata.setdefault("items", {})
             if not isinstance(items, dict):
                 items = {}
@@ -1618,12 +1653,8 @@ class AutoCollectManager:
                     digest[:12],
                 )
                 return "inbox_full"
-            AUTO_COLLECT_INBOX_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
             filename = f"{job.target_pack_id}__{digest}{extension}"
             target = AUTO_COLLECT_INBOX_IMAGES_DIR / filename
-            temporary = AUTO_COLLECT_INBOX_IMAGES_DIR / f".{filename}.tmp"
-            temporary.write_bytes(content)
-            os.replace(temporary, target)
             items[record_id] = {
                 "id": record_id,
                 "target_pack_id": job.target_pack_id,
@@ -1647,7 +1678,7 @@ class AutoCollectManager:
                 "review_reason": str(decision.get("review_reason") or ""),
                 "classification": decision,
             }
-            self._save_json(AUTO_COLLECT_INBOX_METADATA_PATH, metadata)
+            await self._commit_inbox(metadata, new_image=(target, content))
         self.counters["collected"] = self.counters.get("collected", 0) + 1
         logger.info(
             "[meme_manager] 已收集图片，等待审核；表情包：%s，分类：%s",
@@ -1668,7 +1699,7 @@ class AutoCollectManager:
         content = await asyncio.to_thread(job.snapshot_path.read_bytes)
         extension = await asyncio.to_thread(self._validate_image, content)
         digest = hashlib.sha256(content).hexdigest()
-        metadata = self._load_json(AUTO_COLLECT_INBOX_METADATA_PATH, {"items": {}})
+        metadata = await self._read_inbox()
         if f"{job.target_pack_id}:{digest}" in metadata.get(
             "items", {}
         ) or digest in self._state.get("rejected", {}).get(job.target_pack_id, []):
@@ -1840,7 +1871,7 @@ class AutoCollectManager:
         """
         pack_id = validate_pack_id(pack_id, "表情包")
         async with self._inbox_lock:
-            metadata = self._load_json(AUTO_COLLECT_INBOX_METADATA_PATH, {"items": {}})
+            metadata = await self._read_inbox()
             records = []
             raw_items = metadata.get("items", {})
             for item in raw_items.values() if isinstance(raw_items, dict) else []:
@@ -2026,7 +2057,7 @@ class AutoCollectManager:
         categories = load_pack_category_mapping(pack_id)
         result = {"imported": 0, "duplicates": 0, "failed": 0, "skipped_review": 0}
         async with self._inbox_lock:
-            metadata = self._load_json(AUTO_COLLECT_INBOX_METADATA_PATH, {"items": {}})
+            metadata = await self._read_inbox()
             items = metadata.get("items", {})
             validated = {}
             skipped_review_ids = set()
@@ -2103,8 +2134,7 @@ class AutoCollectManager:
                         else:
                             result["duplicates"] += 1
                         del items[record_id]
-                        self._save_json(AUTO_COLLECT_INBOX_METADATA_PATH, metadata)
-                        source.unlink(missing_ok=True)
+                        await self._commit_inbox(metadata, removed=(source,))
                     except Exception as exc:
                         result["failed"] += 1
                         logger.error(
@@ -2191,9 +2221,7 @@ class AutoCollectManager:
                     await asyncio.sleep(2)
                     continue
                 async with self._inbox_lock:
-                    metadata = self._load_json(
-                        AUTO_COLLECT_INBOX_METADATA_PATH, {"items": {}}
-                    )
+                    metadata = await self._read_inbox()
                     items = metadata.get("items", {})
                     pending = self._pending_auto_accept[pack_id]
                     pending.intersection_update(
@@ -2265,7 +2293,7 @@ class AutoCollectManager:
         ):
             raise ValueError("请选择要丢弃的图片")
         async with self._inbox_lock:
-            metadata = self._load_json(AUTO_COLLECT_INBOX_METADATA_PATH, {"items": {}})
+            metadata = await self._read_inbox()
             items = metadata.get("items", {})
             paths = {
                 record_id: self.pending_image_path(
@@ -2285,9 +2313,7 @@ class AutoCollectManager:
                 self._save_json(AUTO_COLLECT_STATE_PATH, self._state)
             for record_id in paths:
                 del items[record_id]
-            self._save_json(AUTO_COLLECT_INBOX_METADATA_PATH, metadata)
-            for source in paths.values():
-                source.unlink(missing_ok=True)
+            await self._commit_inbox(metadata, removed=tuple(paths.values()))
         return {"discarded": len(paths)}
 
     async def import_pending(self, pack_id: str) -> dict[str, int]:

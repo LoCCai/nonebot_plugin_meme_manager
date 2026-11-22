@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import tempfile
+import threading
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
@@ -73,6 +74,42 @@ class AutoCollectReviewTests(unittest.IsolatedAsyncioTestCase):
         self.plugin = DummyPlugin()
         self.plugin.semantic_enabled = False
         self.manager = auto_collect.AutoCollectManager(self.plugin, {"enabled": True})
+
+    async def test_cancel_during_inbox_commit_keeps_lock_until_disk_finishes(self):
+        loop = asyncio.get_running_loop()
+        loop_thread = threading.get_ident()
+        entered = asyncio.Event()
+        release = threading.Event()
+        save = self.manager._save_json
+
+        def slow_save(path, metadata):
+            self.assertNotEqual(threading.get_ident(), loop_thread)
+            loop.call_soon_threadsafe(entered.set)
+            self.assertTrue(release.wait(5))
+            save(path, metadata)
+
+        async def save_one(record):
+            async with self.manager._inbox_lock:
+                metadata = await self.manager._read_inbox()
+                metadata["items"][record] = {"id": record}
+                await self.manager._commit_inbox(metadata)
+
+        with patch.object(self.manager, "_save_json", side_effect=slow_save):
+            first = asyncio.create_task(save_one("first"))
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+                first.cancel()
+                await asyncio.sleep(0)
+                second = asyncio.create_task(save_one("second"))
+                await asyncio.sleep(0)
+                self.assertFalse(first.done())
+                self.assertFalse(second.done())
+            finally:
+                release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await first
+            await second
+        self.assertEqual(set((await self.manager._read_inbox())["items"]), {"first", "second"})
 
     async def add_candidate(self, color=(255, 0, 0), confidence=0.9, pack_id="pack-a"):
         content = png_bytes(color)
