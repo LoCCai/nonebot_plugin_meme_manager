@@ -459,12 +459,12 @@ class AutoCollectManager:
         context = (
             {}
             if self.target_pack_id
-            else self.plugin._resolve_runtime_pack_context(event=event)
+            else await asyncio.to_thread(self.plugin._resolve_runtime_pack_context, event=event)
         )
         pack_id = validate_pack_id(
             self.target_pack_id or str(context.get("pack_id") or ""), "收集目标表情包"
         )
-        if not (PACKS_DIR / pack_id).is_dir():
+        if not await asyncio.to_thread((PACKS_DIR / pack_id).is_dir):
             raise ValueError("收集目标表情包不存在，请检查使用规则或收集目标设置。")
         categories = await asyncio.to_thread(load_pack_category_mapping, pack_id)
         if not categories:
@@ -588,10 +588,10 @@ class AutoCollectManager:
         try:
             pack_id = self.target_pack_id
             if not pack_id:
-                context = self.plugin._resolve_runtime_pack_context(event=event)
+                context = await asyncio.to_thread(self.plugin._resolve_runtime_pack_context, event=event)
                 pack_id = context.get("pack_id")
             target_pack_id = validate_pack_id(pack_id, "自动收集目标表情包")
-            if not (PACKS_DIR / target_pack_id).is_dir():
+            if not await asyncio.to_thread((PACKS_DIR / target_pack_id).is_dir):
                 logger.warning("[meme_manager] 自动收集目标表情包不存在：%s", target_pack_id)
                 return False
             categories = await asyncio.to_thread(load_pack_category_mapping, target_pack_id)
