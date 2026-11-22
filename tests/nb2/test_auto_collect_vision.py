@@ -91,7 +91,7 @@ async def test_truncation_increases_budget_once_and_preserves_request(collector,
 async def test_truncation_respects_daily_quota(collector):
     manager, context, image = collector
     manager.daily_recognition_limit = 1
-    assert manager._daily_call_available()
+    assert await manager._daily_call_available()
     context._post = AsyncMock(return_value={"choices": [{"finish_reason": "length"}]})
     with pytest.raises(ValueError, match="finish_reason=length"):
         await manager._classify(image, ".png", {})

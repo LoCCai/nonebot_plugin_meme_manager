@@ -157,7 +157,7 @@ class ManualCollectTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.pipeline.pending_status("pack-a"))["count"], 1)
         self.assertFalse(list((self.flow.pack_dir / "memes").rglob("*.png")))
         self.pipeline.judgment_backend = "vision"
-        self.pipeline._daily_call_available = lambda: False
+        self.pipeline._daily_call_available = AsyncMock(return_value=False)
         event = Event([Image.fromFileSystem(self.flow.gif)])
         await self.manager.quick(event)
         await self.pipeline.queue.join()

@@ -435,13 +435,13 @@ class AutoCollectSubmissionTests(unittest.IsolatedAsyncioTestCase):
             ):
                 manager = auto_collect.AutoCollectManager(DummyPlugin(), {})
                 self.assertFalse(
-                    manager._sample_observation("pack-a:first", "message-1")
+                    await manager._sample_observation("pack-a:first", "message-1")
                 )
                 self.assertFalse(
-                    manager._sample_observation("pack-a:second", "message-2")
+                    await manager._sample_observation("pack-a:second", "message-2")
                 )
                 self.assertFalse(
-                    manager._sample_observation("pack-a:third", "message-3")
+                    await manager._sample_observation("pack-a:third", "message-3")
                 )
                 self.assertEqual(len(manager._state["observations"]), 2)
                 self.assertNotIn("pack-a:first", manager._state["observations"])
@@ -452,7 +452,7 @@ class AutoCollectSubmissionTests(unittest.IsolatedAsyncioTestCase):
             ):
                 manager = auto_collect.AutoCollectManager(DummyPlugin(), {})
                 self.assertFalse(
-                    manager._sample_observation("pack-a:second", "message-4")
+                    await manager._sample_observation("pack-a:second", "message-4")
                 )
                 self.assertEqual(
                     manager._state["observations"]["pack-a:second"]["count"], 1
@@ -469,16 +469,16 @@ class AutoCollectSubmissionTests(unittest.IsolatedAsyncioTestCase):
                     auto_collect.random, "random", side_effect=[0.46, 0.50]
                 ) as roll:
                     self.assertFalse(
-                        manager._sample_observation("pack-a:digest", "first")
+                        await manager._sample_observation("pack-a:digest", "first")
                     )
                     self.assertFalse(
-                        manager._sample_observation("pack-a:digest", "second")
+                        await manager._sample_observation("pack-a:digest", "second")
                     )
                     self.assertTrue(
-                        manager._sample_observation("pack-a:digest", "third")
+                        await manager._sample_observation("pack-a:digest", "third")
                     )
                     self.assertTrue(
-                        manager._sample_observation("pack-a:digest", "fourth")
+                        await manager._sample_observation("pack-a:digest", "fourth")
                     )
                 self.assertEqual(roll.call_count, 2)
                 self.assertEqual(

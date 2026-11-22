@@ -11,7 +11,7 @@ import re
 import shutil
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -171,6 +171,7 @@ class AutoCollectManager:
         self._unavailable_reason = "disabled" if not self.enabled else "not_started"
         self._cooldowns: dict[str, float] = {}
         self._inbox_lock = asyncio.Lock()
+        self._state_lock = asyncio.Lock()
         self._state = self._load_json(
             AUTO_COLLECT_STATE_PATH,
             {"schema_version": AUTO_COLLECT_SCHEMA_VERSION, "decisions": {}},
@@ -204,11 +205,15 @@ class AutoCollectManager:
         """
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(f"{path.suffix}.tmp")
-        with temporary.open("w", encoding="utf-8") as file_obj:
-            json.dump(value, file_obj, ensure_ascii=False, indent=2)
-            file_obj.flush()
-            os.fsync(file_obj.fileno())
-        os.replace(temporary, path)
+        try:
+            with temporary.open("w", encoding="utf-8") as file_obj:
+                json.dump(value, file_obj, ensure_ascii=False, indent=2)
+                file_obj.flush()
+                os.fsync(file_obj.fileno())
+            os.replace(temporary, path)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
 
     async def _read_inbox(self, *, initialize: bool = False) -> dict[str, Any]:
         default = {"items": {}}
@@ -234,6 +239,10 @@ class AutoCollectManager:
             for path in removed:
                 path.unlink(missing_ok=True)
 
+        await self._finish_disk_write(commit)
+
+    @staticmethod
+    async def _finish_disk_write(commit: Callable[[], None]) -> None:
         # Cancellation cannot interrupt a thread in fsync. Hold the caller's
         # lock until the writer finishes, even during shutdown or a second cancel.
         writer = asyncio.create_task(asyncio.to_thread(commit))
@@ -247,6 +256,16 @@ class AutoCollectManager:
                     continue
             writer.result()
             raise
+
+    async def _commit_state(self, **updates: Any) -> None:
+        """Publish a new snapshot only after its atomic save, under _state_lock."""
+        snapshot = {**self._state, **updates}
+
+        def commit() -> None:
+            self._save_json(AUTO_COLLECT_STATE_PATH, snapshot)
+            self._state = snapshot
+
+        await self._finish_disk_write(commit)
 
     def _decision_service_status(self) -> dict[str, Any]:
         """返回当前使用方的本地决策服务就绪状态，并隐藏敏感信息。
@@ -664,7 +683,7 @@ class AutoCollectManager:
             queued = queued or accepted
         return queued
 
-    def _sample_observation(self, record_id: str, message_key: str) -> bool:
+    async def _sample_observation(self, record_id: str, message_key: str) -> bool:
         """记录图片在不同消息中的出现次数，并逐次提高识别概率。
 
         Args:
@@ -674,86 +693,76 @@ class AutoCollectManager:
         Returns:
             图片已命中采样或此前已经达到处理门槛时返回 True。
         """
-        now = time.time()
-        observations = self._state.setdefault("observations", {})
-        if not isinstance(observations, dict):
-            observations = {}
-            self._state["observations"] = observations
-        for key, item in list(observations.items()):
-            last_seen = item.get("last_seen") if isinstance(item, dict) else None
-            if (
-                not isinstance(last_seen, (int, float))
-                or now - last_seen > OBSERVATION_TTL_SECONDS
-            ):
-                del observations[key]
-        item = observations.get(record_id)
-        if not isinstance(item, dict):
-            item = {"count": 0, "last_seen": now, "message_ids": [], "triggered": False}
+        async with self._state_lock:
+            now = time.time()
+            saved = self._state.get("observations")
+            observations = dict(saved) if isinstance(saved, dict) else {}
+            for key, item in list(observations.items()):
+                last_seen = item.get("last_seen") if isinstance(item, dict) else None
+                if (
+                    not isinstance(last_seen, (int, float))
+                    or now - last_seen > OBSERVATION_TTL_SECONDS
+                ):
+                    del observations[key]
+            item = observations.get(record_id)
+            if not isinstance(item, dict):
+                item = {"count": 0, "last_seen": now, "message_ids": [], "triggered": False}
+            else:
+                item = dict(item)
             observations[record_id] = item
-        message_ids = item.get("message_ids")
-        if not isinstance(message_ids, list):
-            message_ids = []
-        if message_key and message_key in message_ids:
-            self.counters["redelivered"] = self.counters.get("redelivered", 0) + 1
-            logger.info(
-                "[meme_manager] 自动收集跳过图片：平台重复投递同一消息，图片摘要：%s",
-                record_id.rsplit(":", 1)[-1][:12],
-            )
-            return False
-        if message_key:
-            message_ids.append(message_key)
-        item["message_ids"] = message_ids[-MAX_OBSERVATION_MESSAGE_IDS:]
-        count = item.get("count")
-        item["count"] = min(8, max(0, count if isinstance(count, int) else 0) + 1)
-        item["last_seen"] = now
-        digest = record_id.rsplit(":", 1)[-1]
-        if item.get("triggered"):
-            logger.info(
-                "[meme_manager] 自动收集图片此前已命中采样，继续尝试处理；第 %s 次，图片摘要：%s",
-                item["count"],
-                digest[:12],
-            )
-        elif item["count"] == 1:
-            self.counters["first_observation"] = (
-                self.counters.get("first_observation", 0) + 1
-            )
-            logger.info(
-                "[meme_manager] 自动收集首次见到图片：已记录，等待再次出现；图片摘要：%s",
-                digest[:12],
-            )
-        else:
-            probability = (
-                1.0 if item["count"] >= 8 else 1.0 - 0.55 * 0.9 ** (item["count"] - 2)
-            )
-            if item["count"] >= 8 or random.random() < probability:
-                item["triggered"] = True
-                self.counters["progressive_hit"] = (
-                    self.counters.get("progressive_hit", 0) + 1
+            message_ids = item.get("message_ids")
+            if not isinstance(message_ids, list):
+                message_ids = []
+            if message_key and message_key in message_ids:
+                self.counters["redelivered"] = self.counters.get("redelivered", 0) + 1
+                logger.info(
+                    "[meme_manager] 自动收集跳过图片：平台重复投递同一消息，图片摘要：%s",
+                    record_id.rsplit(":", 1)[-1][:12],
+                )
+                return False
+            if message_key:
+                message_ids = [*message_ids, message_key]
+            item["message_ids"] = message_ids[-MAX_OBSERVATION_MESSAGE_IDS:]
+            count = item.get("count")
+            item["count"] = min(8, max(0, count if isinstance(count, int) else 0) + 1)
+            item["last_seen"] = now
+            digest = record_id.rsplit(":", 1)[-1]
+            previously_triggered = bool(item.get("triggered"))
+            if not previously_triggered and item["count"] > 1:
+                probability = (
+                    1.0 if item["count"] >= 8 else 1.0 - 0.55 * 0.9 ** (item["count"] - 2)
+                )
+                item["triggered"] = item["count"] >= 8 or random.random() < probability
+            if len(observations) > MAX_OBSERVATIONS:
+                oldest = sorted(
+                    observations, key=lambda key: observations[key]["last_seen"]
+                )
+                for key in oldest[: len(observations) - MAX_OBSERVATIONS]:
+                    del observations[key]
+            await self._commit_state(observations=observations)
+            if previously_triggered:
+                logger.info(
+                    "[meme_manager] 自动收集图片此前已命中采样，继续尝试处理；第 %s 次，图片摘要：%s",
+                    item["count"],
+                    digest[:12],
+                )
+            elif item["count"] == 1:
+                self.counters["first_observation"] = (
+                    self.counters.get("first_observation", 0) + 1
                 )
                 logger.info(
-                    "[meme_manager] 自动收集重复图片命中采样：第 %s 次，本次概率 %.1f%%，图片摘要：%s",
-                    item["count"],
-                    probability * 100,
+                    "[meme_manager] 自动收集首次见到图片：已记录，等待再次出现；图片摘要：%s",
                     digest[:12],
                 )
             else:
-                self.counters["progressive_miss"] = (
-                    self.counters.get("progressive_miss", 0) + 1
-                )
+                hit = item["triggered"]
+                counter = "progressive_hit" if hit else "progressive_miss"
+                self.counters[counter] = self.counters.get(counter, 0) + 1
                 logger.info(
-                    "[meme_manager] 自动收集重复图片未命中采样：第 %s 次，本次概率 %.1f%%，图片摘要：%s",
-                    item["count"],
-                    probability * 100,
-                    digest[:12],
+                    "[meme_manager] 自动收集重复图片%s采样：第 %s 次，本次概率 %.1f%%，图片摘要：%s",
+                    "命中" if hit else "未命中", item["count"], probability * 100, digest[:12],
                 )
-        if len(observations) > MAX_OBSERVATIONS:
-            oldest = sorted(
-                observations, key=lambda key: observations[key]["last_seen"]
-            )
-            for key in oldest[: len(observations) - MAX_OBSERVATIONS]:
-                del observations[key]
-        self._save_json(AUTO_COLLECT_STATE_PATH, self._state)
-        return bool(item.get("triggered"))
+            return bool(item.get("triggered"))
 
     async def _snapshot_and_enqueue(
         self,
@@ -895,7 +904,10 @@ class AutoCollectManager:
                         digest[:12],
                     )
                     return False
-                if not self._sample_observation(record_id, message_key):
+                if not await self._sample_observation(record_id, message_key):
+                    return False
+                # Another snapshot may have queued this digest during the state write.
+                if record_id in self._inflight:
                     return False
             if not self._ready:
                 self.counters["not_ready"] = self.counters.get("not_ready", 0) + 1
@@ -1023,31 +1035,27 @@ class AutoCollectManager:
             raise ValueError(f"不支持的图片格式：{image_format or '未知'}")
         return extension
 
-    def _daily_call_available(self) -> bool:
+    async def _daily_call_available(self) -> bool:
         """在配额可用时占用一次当天的识图次数。
 
         Returns:
             视觉识别请求可以继续时返回 True。
         """
-        today = datetime.now(timezone.utc).date().isoformat()
-        if str(self._state.get("recognition_date") or "") != today:
-            self._state["recognition_date"] = today
-            self._state["recognition_count"] = 0
-        count = max(0, int(self._state.get("recognition_count", 0) or 0))
-        if self.daily_recognition_limit and count >= self.daily_recognition_limit:
-            return False
-        self._state["recognition_count"] = count + 1
-        self._save_json(AUTO_COLLECT_STATE_PATH, self._state)
-        return True
+        async with self._state_lock:
+            today = datetime.now(timezone.utc).date().isoformat()
+            count = 0
+            if self._state.get("recognition_date") == today:
+                count = max(0, int(self._state.get("recognition_count", 0) or 0))
+            if self.daily_recognition_limit and count >= self.daily_recognition_limit:
+                return False
+            await self._commit_state(recognition_date=today, recognition_count=count + 1)
+            return True
 
-    def _decision_call_started(self) -> None:
-        self.counters["decision_attempts"] = (
-            self.counters.get("decision_attempts", 0) + 1
-        )
-        self._state["decision_count"] = (
-            max(0, int(self._state.get("decision_count", 0) or 0)) + 1
-        )
-        self._save_json(AUTO_COLLECT_STATE_PATH, self._state)
+    async def _decision_call_started(self) -> None:
+        async with self._state_lock:
+            count = max(0, int(self._state.get("decision_count", 0) or 0))
+            await self._commit_state(decision_count=count + 1)
+            self.counters["decision_attempts"] = self.counters.get("decision_attempts", 0) + 1
 
     def _vision_config_signature(self) -> str:
         provider = (
@@ -1153,37 +1161,35 @@ class AutoCollectManager:
         signature = self._vision_config_signature()
         return f"{AUTO_COLLECT_PROMPT_VERSION}:{PROMPT_VERSION}:{self.vision_provider_id}:{signature}:{target_pack_id}:{catalog_hash}:{digest}"
 
-    def _remember_decision(self, key: str, decision: dict[str, Any]) -> None:
+    async def _remember_decision(self, key: str, decision: dict[str, Any]) -> None:
         """保存一次成功的分类结果，并限制历史记录数量。
 
         Args:
             key: 识别结果缓存键。
             decision: 已规范化的分类结果。
         """
-        decisions = self._state.setdefault("decisions", {})
-        if not isinstance(decisions, dict):
-            decisions = {}
-            self._state["decisions"] = decisions
-        decisions[key] = {
-            **decision,
-            "checked_at": datetime.now(timezone.utc).isoformat(),
-        }
-        while len(decisions) > MAX_DECISION_CACHE_ITEMS:
-            decisions.pop(next(iter(decisions)))
-        self._save_json(AUTO_COLLECT_STATE_PATH, self._state)
+        async with self._state_lock:
+            saved = self._state.get("decisions")
+            decisions = dict(saved) if isinstance(saved, dict) else {}
+            decisions[key] = {
+                **decision,
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+            }
+            while len(decisions) > MAX_DECISION_CACHE_ITEMS:
+                decisions.pop(next(iter(decisions)))
+            await self._commit_state(decisions=decisions)
 
-    def _remember_understanding(self, key: str, understanding: dict[str, Any]) -> None:
-        understandings = self._state.setdefault("understandings", {})
-        if not isinstance(understandings, dict):
-            understandings = {}
-            self._state["understandings"] = understandings
-        understandings[key] = {
-            **understanding,
-            "checked_at": datetime.now(timezone.utc).isoformat(),
-        }
-        while len(understandings) > MAX_DECISION_CACHE_ITEMS:
-            understandings.pop(next(iter(understandings)))
-        self._save_json(AUTO_COLLECT_STATE_PATH, self._state)
+    async def _remember_understanding(self, key: str, understanding: dict[str, Any]) -> None:
+        async with self._state_lock:
+            saved = self._state.get("understandings")
+            understandings = dict(saved) if isinstance(saved, dict) else {}
+            understandings[key] = {
+                **understanding,
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+            }
+            while len(understandings) > MAX_DECISION_CACHE_ITEMS:
+                understandings.pop(next(iter(understandings)))
+            await self._commit_state(understandings=understandings)
 
     @staticmethod
     def _explicit_decision_rejection(decision: Any) -> bool:
@@ -1247,7 +1253,7 @@ class AutoCollectManager:
             text = str(getattr(response, "completion_text", "") or "").strip()
             if reason != "length" and text:
                 return text
-            if reason == "length" and not retried_length and self._daily_call_available():
+            if reason == "length" and not retried_length and await self._daily_call_available():
                 retried_length = True
                 request["max_tokens"] *= 2
                 self.counters["vision_length_retries"] = self.counters.get("vision_length_retries", 0) + 1
@@ -1441,7 +1447,7 @@ class AutoCollectManager:
                 decision_model=decision_model,
                 code=str(status.get("reason") or "decision_not_ready"),
             )
-        self._decision_call_started()
+        await self._decision_call_started()
         try:
             answers = await client.evaluate(state, questions)
         except asyncio.CancelledError:
@@ -1505,7 +1511,7 @@ class AutoCollectManager:
             else None
         )
         if not isinstance(understanding, dict):
-            if not self._daily_call_available():
+            if not await self._daily_call_available():
                 self.counters["quota"] = self.counters.get("quota", 0) + 1
                 logger.info(
                     "[meme_manager] 视觉识别额度已耗尽：表情包=%s 摘要=%s",
@@ -1514,7 +1520,7 @@ class AutoCollectManager:
                 )
                 return None
             understanding = await self._understand(content, extension)
-            self._remember_understanding(understanding_key, understanding)
+            await self._remember_understanding(understanding_key, understanding)
         else:
             self.counters["understanding_cache_hits"] = (
                 self.counters.get("understanding_cache_hits", 0) + 1
@@ -1532,7 +1538,7 @@ class AutoCollectManager:
             return cached
         decision = await self._judge_understanding(understanding, job.categories)
         if decision.get("decision_status") == "completed":
-            self._remember_decision(decision_key, decision)
+            await self._remember_decision(decision_key, decision)
         return decision
 
     @staticmethod
@@ -1775,7 +1781,7 @@ class AutoCollectManager:
             decisions = self._state.get("decisions", {})
             decision = decisions.get(cache_key) if isinstance(decisions, dict) else None
             if not isinstance(decision, dict):
-                if not self._daily_call_available():
+                if not await self._daily_call_available():
                     self.counters["quota"] = self.counters.get("quota", 0) + 1
                     logger.info(
                         "[meme_manager] 自动收集跳过图片：已达到每日识别上限，表情包：%s，图片摘要：%s",
@@ -1784,7 +1790,7 @@ class AutoCollectManager:
                     )
                     return "quota"
                 decision = await self._classify(content, extension, job.categories)
-                self._remember_decision(cache_key, decision)
+                await self._remember_decision(cache_key, decision)
             if (
                 not bool(decision.get("is_meme"))
                 or float(decision.get("meme_confidence", 0) or 0)
@@ -2302,15 +2308,13 @@ class AutoCollectManager:
                 for record_id in ids
             }
             if remember_rejection:
-                rejected = self._state.setdefault("rejected", {}).setdefault(
-                    pack_id, []
-                )
-                rejected.extend(
-                    items[record_id]["content_sha256"]
-                    for record_id in paths
-                    if items[record_id]["content_sha256"] not in rejected
-                )
-                self._save_json(AUTO_COLLECT_STATE_PATH, self._state)
+                async with self._state_lock:
+                    rejected = dict(self._state.get("rejected", {}))
+                    digests = list(rejected.get(pack_id, []))
+                    digests.extend(items[key]["content_sha256"] for key in paths
+                                   if items[key]["content_sha256"] not in digests)
+                    rejected[pack_id] = digests
+                    await self._commit_state(rejected=rejected)
             for record_id in paths:
                 del items[record_id]
             await self._commit_inbox(metadata, removed=tuple(paths.values()))
